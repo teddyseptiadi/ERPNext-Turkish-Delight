@@ -1299,3 +1299,209 @@ def td_attach_all_docs_from_item(document, strURL):
 		dIndex = dIndex + 1
 
 	frappe.msgprint("{0} adet dosya eklendi".format(count))
+
+import frappe
+import zipfile
+import io
+import base64
+import requests
+from datetime import datetime
+
+@frappe.whitelist()
+def send_invoice_to_finalizer(invoice_name=None):
+    if not invoice_name:
+        return {"status": "fail", "error": "Invoice name is required"}
+    try:
+        settings = frappe.get_single("TD EInvoice Settings")
+        if not settings.integrator:
+            return {"status": "fail", "error": "Integrator not configured"}
+        integrator = frappe.get_doc("TD EInvoice Integrator", settings.integrator)
+        if not integrator.td_enable:
+            return {"status": "fail", "error": "Integration is disabled"}
+
+        doc_si = frappe.get_doc("Sales Invoice", invoice_name)
+        xml_content = generate_invoice_xml(doc_si, settings)
+
+        # XML → ZIP → Base64
+        mem = io.BytesIO()
+        with zipfile.ZipFile(mem, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(f"{doc_si.name}.xml", xml_content)
+        zip_base64 = base64.b64encode(mem.getvalue()).decode()
+
+        soap_body = create_soap_body(zip_base64, integrator, file_name=f"{doc_si.name}.zip")
+        url = get_service_url(integrator)
+
+        headers = {
+            "Content-Type": 'application/soap+xml; charset=utf-8; action="http://tempuri.org/IEBelge/sendData"'
+        }
+        resp = requests.post(url, data=soap_body.encode("utf-8"), headers=headers, timeout=60)
+
+        # ✅ Log XML and response
+        frappe.log_error(
+            f"""🧾 Sent XML:
+{xml_content}
+
+📤 Finalizer Response:
+HTTP {resp.status_code}
+{resp.text}
+""",
+            f"Finalizer SOAP Result - {invoice_name}"
+        )
+
+        return {
+            "status": "success" if resp.status_code == 200 else "fail",
+            "http_status": resp.status_code,
+            "response": resp.text
+        }
+
+    except Exception as e:
+        frappe.log_error(str(e), f"Finalizer Send Error - {invoice_name}")
+        return {"status": "fail", "error": str(e)}
+
+def generate_invoice_xml(doc_si, settings):
+    company = frappe.get_doc("Company", settings.company) if settings.company else None
+    customer = frappe.get_doc("Customer", doc_si.customer) if doc_si.customer else None
+
+    invoice_lines = ""
+    for idx, item in enumerate(doc_si.items, 1):
+        uom_code = get_uom_code(item.uom, settings)
+        invoice_lines += f"""  <cac:InvoiceLine>
+    <cbc:ID>{idx}</cbc:ID>
+    <cbc:InvoicedQuantity unitCode="{uom_code}">{item.qty}</cbc:InvoicedQuantity>
+    <cbc:LineExtensionAmount currencyID="{doc_si.currency or 'TRY'}">{item.amount}</cbc:LineExtensionAmount>
+    <cac:Item><cbc:Name>{item.item_name or item.item_code}</cbc:Name></cac:Item>
+    <cac:Price><cbc:PriceAmount currencyID="{doc_si.currency or 'TRY'}">{item.rate}</cbc:PriceAmount></cac:Price>
+  </cac:InvoiceLine>
+"""
+
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Invoice xmlns:ubltr="urn:oasis:names:specification:ubl:schema:xsd:TurkishCustomizationExtensionComponents"
+         xmlns:qdt="urn:oasis:names:specification:ubl:schema:xsd:QualifiedDatatypes-2"
+         xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"
+         xmlns:udt="urn:un:unece:uncefact:data:specification:UnqualifiedDataTypesSchemaModule:2"
+         xmlns:xades="http://uri.etsi.org/01903/v1.3.2#"
+         xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
+         xsi:schemaLocation="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2 UBL-Invoice-2.1.xsd">
+  <cbc:UBLVersionID>2.1</cbc:UBLVersionID>
+  <cbc:CustomizationID>TR1.2</cbc:CustomizationID>
+  <cbc:ProfileID>{doc_si.custom_scenario_type}</cbc:ProfileID>
+  <cbc:ID>{doc_si.name}</cbc:ID>
+  <cbc:IssueDate>{doc_si.posting_date}</cbc:IssueDate>
+  <cbc:IssueTime>{doc_si.posting_time or '12:00:00'}</cbc:IssueTime>
+  <cbc:InvoiceTypeCode>{doc_si.custom_invoice_type or 'SATIS'}</cbc:InvoiceTypeCode>
+  <cbc:DocumentCurrencyCode>{doc_si.currency or 'TRY'}</cbc:DocumentCurrencyCode>
+  <cbc:LineCountNumeric>{len(doc_si.items)}</cbc:LineCountNumeric>
+
+  <cac:AccountingSupplierParty><cac:Party>
+    <cac:PartyIdentification><cbc:ID>{company.tax_id}</cbc:ID></cac:PartyIdentification>
+    <cac:PartyName><cbc:Name>{company.company_name}</cbc:Name></cac:PartyName>
+  </cac:Party></cac:AccountingSupplierParty>
+
+  <cac:AccountingCustomerParty><cac:Party>
+    <cac:PartyIdentification><cbc:ID>{customer.tax_id}</cbc:ID></cac:PartyIdentification>
+    <cac:PartyName><cbc:Name>{doc_si.customer_name}</cbc:Name></cac:PartyName>
+  </cac:Party></cac:AccountingCustomerParty>
+
+{invoice_lines}
+</Invoice>
+"""
+    return xml
+
+def get_uom_code(uom, settings):
+    if not uom or not settings.unit_mapping:
+        return "NIU"
+    for m in settings.unit_mapping:
+        if m.einvoice_unit == uom:
+            return m.einvoice_unit or "NIU"
+    return "NIU"
+
+def create_soap_body(zip_base64, integrator, file_name="invoice.zip"):
+    return f"""<?xml version="1.0" encoding="utf-8"?>
+<soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                 xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                 xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
+  <soap12:Body><sendData xmlns="http://tempuri.org/">
+      <document>
+        <UserID>{integrator.username}</UserID>
+        <UserPassword>{integrator.password}</UserPassword>
+        <ReceiverID>22222222222</ReceiverID>
+        <DocumentVariable>efaturaozel</DocumentVariable>
+        <fileName>{file_name}</fileName>
+        <binaryData>
+          <FileByte>{zip_base64}</FileByte>
+          <FileName>{file_name}</FileName>
+        </binaryData>
+      </document>
+    </sendData></soap12:Body>
+</soap12:Envelope>"""
+
+def get_service_url(integrator):
+    return integrator.td_test and (integrator.test_efatura_url or integrator.efatura_url) or (integrator.efatura_url or "")
+
+
+@frappe.whitelist()
+def send_custom_xml_to_finalizer(xml_string):
+    import io, zipfile, base64, requests
+
+    # XML'yi ZIP'e çevir
+    memory_zip = io.BytesIO()
+    with zipfile.ZipFile(memory_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("invoice.xml", xml_string)
+    zip_bytes = memory_zip.getvalue()
+    zip_base64 = base64.b64encode(zip_bytes).decode("utf-8")
+
+    # SOAP Body hazırla
+    soap_body = f"""<?xml version="1.0" encoding="utf-8"?>
+<soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                 xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                 xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
+  <soap12:Body>
+    <sendData xmlns="http://tempuri.org/">
+      <document>
+        <UserID>24</UserID>
+        <UserPassword>kFaQ7yww45jVr7NnTHmGaA==</UserPassword>
+        <ReceiverID>22222222222</ReceiverID>
+        <DocumentVariable>efaturaozel</DocumentVariable>
+        <fileName>invoice.zip</fileName>
+        <binaryData>
+          <FileByte>{zip_base64}</FileByte>
+          <FileName>invoice.zip</FileName>
+        </binaryData>
+      </document>
+    </sendData>
+  </soap12:Body>
+</soap12:Envelope>"""
+
+    headers = {
+        "Content-Type": "application/soap+xml; charset=utf-8; action=\"http://tempuri.org/IEBelge/sendData\""
+    }
+
+    url = "https://app.finalizer.com.tr/services/EBelge.svc"
+
+    try:
+        response = requests.post(url, data=soap_body.encode("utf-8"), headers=headers)
+        response_text = response.text.strip()
+
+        # ✅ XML ve yanıt logla
+        frappe.log_error(
+            f"""🧾 Sent XML:
+{xml_string}
+
+📤 Finalizer Response:
+HTTP {response.status_code}
+{response_text}
+""",
+            "Custom Finalizer XML Send Log"
+        )
+
+        return {
+            "status": "success" if response.status_code == 200 else "fail",
+            "http_status": response.status_code,
+            "response": response_text
+        }
+
+    except Exception as e:
+        frappe.log_error(str(e), "Custom Finalizer XML Send Error")
+        return {"status": "fail", "error": str(e)}

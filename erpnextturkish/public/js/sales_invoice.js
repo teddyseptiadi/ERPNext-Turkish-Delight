@@ -48,3 +48,28 @@ frappe.ui.form.on("Sales Invoice", {
         });
     }
 });
+
+frappe.ui.form.on('Sales Invoice', {
+    refresh(frm) {
+        if (!frm.is_new()) {
+            frm.add_custom_button(__('Finalizer Gönder'), () => {
+                frappe.call({
+                    method: 'erpnextturkish.td_utils.send_invoice_to_finalizer',
+                    args: { invoice_name: frm.doc.name },
+                    callback(r) {
+                        if (!r.exc) {
+                            const msg = r.message.status === 'success'
+                                ? `✅ Gönderim başarılı<br><pre>${frappe.utils.escape_html(r.message.response)}</pre>`
+                                : `❌ Hata<br><pre>${frappe.utils.escape_html(r.message.error || r.message.response)}</pre>`;
+                            frappe.msgprint({
+                                title: __('Finalizer Yanıtı'),
+                                indicator: r.message.status === 'success' ? 'green' : 'red',
+                                message: msg
+                            });
+                        }
+                    }
+                });
+            });
+        }
+    }
+});

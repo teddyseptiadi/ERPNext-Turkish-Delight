@@ -39,7 +39,8 @@ doctype_js = {
 	"Production Plan": "public/js/production_plan.js",
 	"Material Request": "public/js/material_request.js",
     "Stock Reconciliation": "public/js/stock_reconciliation.js",
-	"Item": "public/js/item.js"
+	"Item": "public/js/item.js",
+    "Sales Invoice" : "public/js/sales_invoice.js"
 }
 # Home Pages
 # ----------

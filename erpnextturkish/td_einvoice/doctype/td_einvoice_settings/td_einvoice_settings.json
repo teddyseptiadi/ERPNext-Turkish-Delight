@@ -1,0 +1,214 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-06-11 13:53:04.115271",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "section_integrator",
+  "integrator",
+  "section_company_info",
+  "company",
+  "alias",
+  "branch",
+  "central_registration_system",
+  "trade_registry_number",
+  "column_break_qiee",
+  "street",
+  "building_number",
+  "door_number",
+  "district",
+  "city",
+  "country",
+  "section_units",
+  "unit_mapping",
+  "section_notes",
+  "td_not1_formul",
+  "td_not2_formul",
+  "td_not3_formul",
+  "td_not4_formul",
+  "column_break_rdgh",
+  "einvoice_document_number_field_to_be_updated",
+  "notes_section",
+  "td_notes",
+  "finalizer_tester_tab",
+  "finalizer_test_xml",
+  "finalizer_response"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_company_info",
+   "fieldtype": "Section Break",
+   "label": "Company Information"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "alias",
+   "fieldtype": "Data",
+   "label": "VKN Alias"
+  },
+  {
+   "fieldname": "branch",
+   "fieldtype": "Data",
+   "label": "Branch Code"
+  },
+  {
+   "fieldname": "section_units",
+   "fieldtype": "Section Break",
+   "label": "Unit Mapping"
+  },
+  {
+   "fieldname": "unit_mapping",
+   "fieldtype": "Table",
+   "label": "Unit Conversion Table",
+   "options": "TD EInvoice Unit Mapping"
+  },
+  {
+   "fieldname": "section_notes",
+   "fieldtype": "Section Break",
+   "label": "Invoice Notes"
+  },
+  {
+   "description": "e.g. Only #{{docSI.in_words}}",
+   "fieldname": "td_not1_formul",
+   "fieldtype": "Data",
+   "label": "Note1 Formula"
+  },
+  {
+   "description": "{{docSI.aciklama}} . Vade: {{docSI.payment_schedule[0].payment_term}}",
+   "fieldname": "td_not2_formul",
+   "fieldtype": "Data",
+   "label": "Note2 Formula"
+  },
+  {
+   "fieldname": "td_not3_formul",
+   "fieldtype": "Data",
+   "label": "Note3 Formula"
+  },
+  {
+   "fieldname": "section_integrator",
+   "fieldtype": "Section Break",
+   "label": "Integrator Configuration"
+  },
+  {
+   "fieldname": "integrator",
+   "fieldtype": "Link",
+   "label": "TD EInvoice Integrator",
+   "options": "TD EInvoice Integrator"
+  },
+  {
+   "fieldname": "central_registration_system",
+   "fieldtype": "Data",
+   "label": "Central Registration System"
+  },
+  {
+   "fieldname": "trade_registry_number",
+   "fieldtype": "Data",
+   "label": "Trade Registry Number"
+  },
+  {
+   "fieldname": "street",
+   "fieldtype": "Data",
+   "label": "Street"
+  },
+  {
+   "fieldname": "column_break_qiee",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "building_number",
+   "fieldtype": "Data",
+   "label": "Building Number"
+  },
+  {
+   "fieldname": "door_number",
+   "fieldtype": "Data",
+   "label": "Door Number"
+  },
+  {
+   "fieldname": "district",
+   "fieldtype": "Data",
+   "label": "District"
+  },
+  {
+   "fieldname": "city",
+   "fieldtype": "Data",
+   "label": "City"
+  },
+  {
+   "fieldname": "country",
+   "fieldtype": "Data",
+   "label": "Country"
+  },
+  {
+   "fieldname": "td_not4_formul",
+   "fieldtype": "Data",
+   "label": "Note4 Formula"
+  },
+  {
+   "description": "Specifies which field in the Sales Invoice document the generated E-Invoice Number will be written to after a successful submission.",
+   "fieldname": "einvoice_document_number_field_to_be_updated",
+   "fieldtype": "Data",
+   "label": "EInvoice Document Number Field to be Updated"
+  },
+  {
+   "fieldname": "column_break_rdgh",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "notes_section",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "td_notes",
+   "fieldtype": "HTML",
+   "label": "td_notes",
+   "options": "<h3>Usage Notes</h3>\n<h5>- Documents that can be used within notes and XML</h5>\n<h6>Sales Invoice: docSI, Customer: docCustomer, Customer Address: docCustomerAddress</h6>\n<h6>Invoice Line: docCurrentLine, Item: docItem</h6>\n<h5>- Template and Header Examples</h5>\n<a href=\"https://github.com/logedosoft/ERPNext-Turkish-Delight/tree/master/erpnextturkish/public/xml_template_examples\" target=\"_blank\">\nhttps://github.com/logedosoft/ERPNext-Turkish-Delight/tree/master/erpnextturkish/public/xml_template_examples\n</a>\n"
+  },
+  {
+   "fieldname": "finalizer_tester_tab",
+   "fieldtype": "Tab Break",
+   "label": "Finalizer Tester"
+  },
+  {
+   "fieldname": "finalizer_test_xml",
+   "fieldtype": "Code",
+   "label": "finalizer_test_xml"
+  },
+  {
+   "fieldname": "finalizer_response",
+   "fieldtype": "Long Text",
+   "label": "finalizer_response"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2025-06-16 17:07:13.818643",
+ "modified_by": "Administrator",
+ "module": "TD EInvoice",
+ "name": "TD EInvoice Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -1,0 +1,157 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:name1",
+ "creation": "2025-06-11 13:52:33.173565",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "name1",
+  "section_break_auth",
+  "username",
+  "password",
+  "login_test",
+  "section_break_flags",
+  "td_enable",
+  "td_test",
+  "detailed_log",
+  "section_break_urls",
+  "test_efatura_url",
+  "test_earsiv_url",
+  "efatura_url",
+  "earsiv_url",
+  "section_break_templates",
+  "xml_template_general",
+  "xml_template_lines",
+  "xml_template_header"
+ ],
+ "fields": [
+  {
+   "fieldname": "name1",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Name",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "section_break_auth",
+   "fieldtype": "Section Break",
+   "label": "Authentication"
+  },
+  {
+   "fieldname": "username",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Username",
+   "reqd": 1
+  },
+  {
+   "fieldname": "password",
+   "fieldtype": "Password",
+   "in_list_view": 1,
+   "label": "Password",
+   "reqd": 1
+  },
+  {
+   "fieldname": "login_test",
+   "fieldtype": "Button",
+   "label": "Login Test"
+  },
+  {
+   "fieldname": "section_break_flags",
+   "fieldtype": "Section Break",
+   "label": "Module Options"
+  },
+  {
+   "default": "0",
+   "fieldname": "td_enable",
+   "fieldtype": "Check",
+   "label": "Enable"
+  },
+  {
+   "default": "0",
+   "fieldname": "detailed_log",
+   "fieldtype": "Check",
+   "label": "Enable Detailed Log"
+  },
+  {
+   "fieldname": "section_break_urls",
+   "fieldtype": "Section Break",
+   "label": "Service URLs"
+  },
+  {
+   "fieldname": "test_efatura_url",
+   "fieldtype": "Data",
+   "label": "Test E-Invoice URL"
+  },
+  {
+   "fieldname": "test_earsiv_url",
+   "fieldtype": "Data",
+   "label": "Test E-Archive URL"
+  },
+  {
+   "fieldname": "efatura_url",
+   "fieldtype": "Data",
+   "label": "E-Invoice URL"
+  },
+  {
+   "fieldname": "earsiv_url",
+   "fieldtype": "Data",
+   "label": "E-Archive URL"
+  },
+  {
+   "fieldname": "section_break_templates",
+   "fieldtype": "Section Break",
+   "label": "XML Templates"
+  },
+  {
+   "fieldname": "xml_template_general",
+   "fieldtype": "Code",
+   "label": "E-Invoice XML Body"
+  },
+  {
+   "fieldname": "xml_template_lines",
+   "fieldtype": "Code",
+   "label": "Line XML Template"
+  },
+  {
+   "fieldname": "xml_template_header",
+   "fieldtype": "Code",
+   "label": "Header XML Content"
+  },
+  {
+   "default": "0",
+   "fieldname": "td_test",
+   "fieldtype": "Check",
+   "label": "Enable Test"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-06-11 17:25:02.096974",
+ "modified_by": "Administrator",
+ "module": "TD EInvoice",
+ "name": "TD EInvoice Integrator",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "show_title_field_in_link": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "name1"
+}

@@ -255,4 +255,22 @@ frappe.ui.form.on("Sales Order", {
             });
         }
     }
+});frappe.ui.form.on('Sales Invoice', {
+    refresh(frm) {
+        if (!frm.is_new()) {
+            frm.add_custom_button(__('Finalizer Test Gönder'), () => {
+                frappe.call({
+                    method: 'erpnextturkish.td_utils.send_invoice_to_finalizer',
+                    args: {
+                        invoice_name: frm.doc.name
+                    },
+                    callback(r) {
+                        if (!r.exc) {
+                            frappe.msgprint(__('Gönderim sonucu: ') + JSON.stringify(r.message));
+                        }
+                    }
+                });
+            });
+        }
+    }
 });
