@@ -13,6 +13,7 @@
   "branch",
   "central_registration_system",
   "trade_registry_number",
+  "tax_office",
   "column_break_qiee",
   "street",
   "building_number",
@@ -186,12 +187,17 @@
    "fieldname": "finalizer_response",
    "fieldtype": "Long Text",
    "label": "finalizer_response"
+  },
+  {
+   "fieldname": "tax_office",
+   "fieldtype": "Data",
+   "label": "Tax Office"
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-06-16 17:07:13.818643",
+ "modified": "2025-06-20 13:15:45.086587",
  "modified_by": "Administrator",
  "module": "TD EInvoice",
  "name": "TD EInvoice Settings",

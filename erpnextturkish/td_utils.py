@@ -1300,168 +1300,573 @@ def td_attach_all_docs_from_item(document, strURL):
 
 	frappe.msgprint("{0} adet dosya eklendi".format(count))
 
+
 import frappe
 import zipfile
 import io
 import base64
 import requests
-from datetime import datetime
+import uuid
+import json
+
+
+@frappe.whitelist()
+def check_profile(receiver_id=None):
+    """Profile sorgulama fonksiyonu"""
+    if not receiver_id:
+        return {"status": "fail", "error": "Receiver ID is required"}
+
+    try:
+        settings = frappe.get_single("TD EInvoice Settings")
+        if not settings.integrator:
+            return {"status": "fail", "error": "Integrator not configured"}
+        
+        integrator = frappe.get_doc("TD EInvoice Integrator", settings.integrator)
+        if not integrator.td_enable:
+            return {"status": "fail", "error": "Integration is disabled"}
+
+        soap_body = create_profile_check_soap(receiver_id, integrator)
+        url = integrator.test_efatura_url if integrator.td_test else integrator.efatura_url
+        headers = {"Content-Type": 'application/soap+xml; charset=utf-8; action="http://tempuri.org/IEBelge/checkProfile"'}
+
+        resp = requests.post(url, data=soap_body.encode("utf-8"), headers=headers, timeout=60)
+
+        if resp.status_code != 200:
+            return {"status": "fail", "error": f"HTTP {resp.status_code}"}
+
+        return_code = extract_return_code_from_response(resp.text)
+        if return_code and return_code not in [300, 400]:
+            return {"status": "fail", "error": f"ReturnCode: {return_code}"}
+
+        profile_type = extract_profile_from_response(resp.text)
+        
+        return {
+            "status": "success",
+            "http_status": resp.status_code,
+            "profile": profile_type,
+            "return_code": return_code
+        }
+
+    except Exception as e:
+        return {"status": "fail", "error": str(e)}
+
 
 @frappe.whitelist()
 def send_invoice_to_finalizer(invoice_name=None):
     if not invoice_name:
         return {"status": "fail", "error": "Invoice name is required"}
+
     try:
         settings = frappe.get_single("TD EInvoice Settings")
         if not settings.integrator:
             return {"status": "fail", "error": "Integrator not configured"}
+        
         integrator = frappe.get_doc("TD EInvoice Integrator", settings.integrator)
         if not integrator.td_enable:
             return {"status": "fail", "error": "Integration is disabled"}
 
         doc_si = frappe.get_doc("Sales Invoice", invoice_name)
-        xml_content = generate_invoice_xml(doc_si, settings)
 
-        # XML → ZIP → Base64
+        # ✅ Doğru kontrol: integrator.td_enable
+        customer = frappe.get_doc("Customer", doc_si.customer)
+        if integrator.td_enable:
+            missing_fields = []
+
+            if not customer.tax_id:
+                missing_fields.append("Tax ID (tax_id)")
+            if not customer.custom_tax_office:
+                missing_fields.append("Tax Office (custom_tax_office)")
+            if not doc_si.customer_address:
+                missing_fields.append("Billing Address (customer_address)")
+
+            if missing_fields:
+                frappe.throw(
+                    "E-Invoice integration is enabled. The following fields are missing in the customer record:<br><ul><li>" +
+                    "</li><li>".join(missing_fields) +
+                    "</li></ul>"
+                )
+
+        receiver_id = doc_si.tax_id or doc_si.customer_name
+        if not receiver_id:
+            return {"status": "fail", "error": "Tax ID (receiver_id) is required"}
+
+        profile_result = check_profile(receiver_id)
+        if profile_result.get("status") != "success":
+            return {"status": "fail", "error": f"Profile check failed: {profile_result.get('error')}"}
+
+        profile_type = profile_result.get("profile", "EARSIVFATURA")
+
+        frappe.db.set_value("Sales Invoice", invoice_name, "custom_profile_type", profile_type)
+        frappe.db.commit()
+
+        xml_content = generate_invoice_xml(doc_si, profile_type, settings)
+
         mem = io.BytesIO()
         with zipfile.ZipFile(mem, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr(f"{doc_si.name}.xml", xml_content)
         zip_base64 = base64.b64encode(mem.getvalue()).decode()
 
-        soap_body = create_soap_body(zip_base64, integrator, file_name=f"{doc_si.name}.zip")
-        url = get_service_url(integrator)
+        soap_body = create_soap_body(zip_base64, integrator, f"{doc_si.name}.zip", receiver_id)
+        url = integrator.test_efatura_url if integrator.td_test else integrator.efatura_url
 
         headers = {
             "Content-Type": 'application/soap+xml; charset=utf-8; action="http://tempuri.org/IEBelge/sendData"'
         }
         resp = requests.post(url, data=soap_body.encode("utf-8"), headers=headers, timeout=60)
 
-        # ✅ Log XML and response
         frappe.log_error(
-            f"""🧾 Sent XML:
-{xml_content}
+            f"""🧾 Profile: {profile_type}
+📄 Sent XML:\n{xml_content}
 
 📤 Finalizer Response:
 HTTP {resp.status_code}
-{resp.text}
-""",
+{resp.text}""",
             f"Finalizer SOAP Result - {invoice_name}"
         )
 
+        add_comment_to_invoice(invoice_name, resp.text, resp.status_code)
+
+        is_success = check_response_success(resp.status_code, resp.text)
+
         return {
-            "status": "success" if resp.status_code == 200 else "fail",
+            "status": "success" if is_success else "fail",
             "http_status": resp.status_code,
+            "profile_used": profile_type,
             "response": resp.text
         }
 
     except Exception as e:
         frappe.log_error(str(e), f"Finalizer Send Error - {invoice_name}")
         return {"status": "fail", "error": str(e)}
+@frappe.whitelist()
+def update_invoice_status(invoice_name=None):
+    """Fatura durumu güncelleme"""
+    if not invoice_name:
+        return {"status": "fail", "error": "Invoice name is required"}
+    return {"status": "success", "message": "Status update functionality will be implemented"}
 
-def generate_invoice_xml(doc_si, settings):
-    company = frappe.get_doc("Company", settings.company) if settings.company else None
-    customer = frappe.get_doc("Customer", doc_si.customer) if doc_si.customer else None
 
-    invoice_lines = ""
-    for idx, item in enumerate(doc_si.items, 1):
-        uom_code = get_uom_code(item.uom, settings)
-        invoice_lines += f"""  <cac:InvoiceLine>
-    <cbc:ID>{idx}</cbc:ID>
-    <cbc:InvoicedQuantity unitCode="{uom_code}">{item.qty}</cbc:InvoicedQuantity>
-    <cbc:LineExtensionAmount currencyID="{doc_si.currency or 'TRY'}">{item.amount}</cbc:LineExtensionAmount>
-    <cac:Item><cbc:Name>{item.item_name or item.item_code}</cbc:Name></cac:Item>
-    <cac:Price><cbc:PriceAmount currencyID="{doc_si.currency or 'TRY'}">{item.rate}</cbc:PriceAmount></cac:Price>
-  </cac:InvoiceLine>
-"""
+def check_response_success(status_code, response_text):
+    """Response başarı kontrolü"""
+    if status_code != 200:
+        return False
+    
+    if "ReturnCode" in response_text:
+        try:
+            import re
+            return_code_match = re.search(r'<.*?ReturnCode.*?>(\d+)</', response_text)
+            if return_code_match:
+                return_code = int(return_code_match.group(1))
+                return return_code == 300
+        except:
+            pass
+    return True
 
-    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<Invoice xmlns:ubltr="urn:oasis:names:specification:ubl:schema:xsd:TurkishCustomizationExtensionComponents"
-         xmlns:qdt="urn:oasis:names:specification:ubl:schema:xsd:QualifiedDatatypes-2"
-         xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"
-         xmlns:udt="urn:un:unece:uncefact:data:specification:UnqualifiedDataTypesSchemaModule:2"
-         xmlns:xades="http://uri.etsi.org/01903/v1.3.2#"
-         xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
-         xsi:schemaLocation="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2 UBL-Invoice-2.1.xsd">
-  <cbc:UBLVersionID>2.1</cbc:UBLVersionID>
-  <cbc:CustomizationID>TR1.2</cbc:CustomizationID>
-  <cbc:ProfileID>{doc_si.custom_scenario_type}</cbc:ProfileID>
-  <cbc:ID>{doc_si.name}</cbc:ID>
-  <cbc:IssueDate>{doc_si.posting_date}</cbc:IssueDate>
-  <cbc:IssueTime>{doc_si.posting_time or '12:00:00'}</cbc:IssueTime>
-  <cbc:InvoiceTypeCode>{doc_si.custom_invoice_type or 'SATIS'}</cbc:InvoiceTypeCode>
-  <cbc:DocumentCurrencyCode>{doc_si.currency or 'TRY'}</cbc:DocumentCurrencyCode>
-  <cbc:LineCountNumeric>{len(doc_si.items)}</cbc:LineCountNumeric>
 
-  <cac:AccountingSupplierParty><cac:Party>
-    <cac:PartyIdentification><cbc:ID>{company.tax_id}</cbc:ID></cac:PartyIdentification>
-    <cac:PartyName><cbc:Name>{company.company_name}</cbc:Name></cac:PartyName>
-  </cac:Party></cac:AccountingSupplierParty>
+def add_comment_to_invoice(invoice_name, response_text, status_code):
+    """Faturaya yorum ekle"""
+    try:
+        comment_text = f"Finalizer Response (HTTP {status_code}):\n{response_text[:1000]}..."
+        frappe.get_doc({
+            "doctype": "Comment",
+            "comment_type": "Comment",
+            "reference_doctype": "Sales Invoice",
+            "reference_name": invoice_name,
+            "content": comment_text
+        }).insert(ignore_permissions=True)
+    except:
+        pass
 
-  <cac:AccountingCustomerParty><cac:Party>
-    <cac:PartyIdentification><cbc:ID>{customer.tax_id}</cbc:ID></cac:PartyIdentification>
-    <cac:PartyName><cbc:Name>{doc_si.customer_name}</cbc:Name></cac:PartyName>
-  </cac:Party></cac:AccountingCustomerParty>
 
-{invoice_lines}
-</Invoice>
-"""
-    return xml
+def extract_return_code_from_response(response_text):
+    """Response'dan ReturnCode çıkar"""
+    try:
+        import re
+        patterns = [
+            r'<a:ReturnCode>(\d+)</a:ReturnCode>',
+            r'<.*?ReturnCode.*?>(\d+)</',
+            r'<ReturnCode>(\d+)</ReturnCode>',
+            r'<d4p1:ReturnCode>(\d+)</d4p1:ReturnCode>'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, response_text, re.IGNORECASE)
+            if match:
+                return int(match.group(1))
+        return None
+    except:
+        return None
 
-def get_uom_code(uom, settings):
-    if not uom or not settings.unit_mapping:
-        return "NIU"
-    for m in settings.unit_mapping:
-        if m.einvoice_unit == uom:
-            return m.einvoice_unit or "NIU"
-    return "NIU"
 
-def create_soap_body(zip_base64, integrator, file_name="invoice.zip"):
+def extract_profile_from_response(response_text):
+    """Response'dan profile tipini çıkar"""
+    try:
+        import re
+        patterns = [
+            r'<a:ReturnText>(.*?)</a:ReturnText>',
+            r'<.*?ReturnText.*?>(.*?)</',
+            r'<ReturnText>(.*?)</ReturnText>',
+            r'<d4p1:ReturnText>(.*?)</d4p1:ReturnText>'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, response_text, re.IGNORECASE | re.DOTALL)
+            if match:
+                return match.group(1).strip()
+        
+        if "EFATURA" in response_text.upper():
+            return "EFATURA"
+        elif "EARSIV" in response_text.upper():
+            return "EARSIVFATURA"
+            
+        return "EARSIVFATURA"
+    except:
+        return "EARSIVFATURA"
+
+
+def create_profile_check_soap(receiver_id, integrator):
+    password = integrator.get_password('password') if hasattr(integrator, 'get_password') else integrator.password
+    user_id = integrator.username
     return f"""<?xml version="1.0" encoding="utf-8"?>
 <soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                  xmlns:xsd="http://www.w3.org/2001/XMLSchema"
                  xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
-  <soap12:Body><sendData xmlns="http://tempuri.org/">
-      <document>
-        <UserID>{integrator.username}</UserID>
-        <UserPassword>{integrator.password}</UserPassword>
-        <ReceiverID>22222222222</ReceiverID>
-        <DocumentVariable>efaturaozel</DocumentVariable>
-        <fileName>{file_name}</fileName>
-        <binaryData>
-          <FileByte>{zip_base64}</FileByte>
-          <FileName>{file_name}</FileName>
-        </binaryData>
+  <soap12:Header/>
+  <soap12:Body>
+    <checkProfile xmlns="http://tempuri.org/">
+      <document xmlns:d4p1="http://schemas.datacontract.org/2004/07/">
+        <d4p1:ReceiverID>{receiver_id}</d4p1:ReceiverID>
+        <d4p1:UserID>{user_id}</d4p1:UserID>
+        <d4p1:UserPassword>{password}</d4p1:UserPassword>
+        <d4p1:DocumentVariable>efaturaozel</d4p1:DocumentVariable>
       </document>
-    </sendData></soap12:Body>
+    </checkProfile>
+  </soap12:Body>
 </soap12:Envelope>"""
 
-def get_service_url(integrator):
-    return integrator.td_test and (integrator.test_efatura_url or integrator.efatura_url) or (integrator.efatura_url or "")
+
+def get_sender_info(settings):
+    """Gönderici bilgilerini al"""
+    try:
+        company_doc = frappe.get_doc("Company", settings.company) if settings.company else None
+        
+        return {
+            'tax_id': settings.central_registration_system or company_doc.tax_id if company_doc else None,
+            'company_name': company_doc.company_name if company_doc else None,
+            'phone': company_doc.phone_no if company_doc else None,
+            'email': company_doc.email if company_doc else None,
+            'tax_office': settings.tax_office or "Merkez Vergi Dairesi",
+            'country': settings.country or "Türkiye",
+            'city': settings.city or "İstanbul",
+            'district': settings.district or "Merkez",
+            'address': f"{settings.street or ''} {settings.building_number or ''} {settings.door_number or ''}".strip()
+        }
+    except:
+        return {
+            'tax_id': None, 'company_name': None, 'phone': None, 'email': None,
+            'tax_office': "Merkez Vergi Dairesi", 'country': "Türkiye", 
+            'city': "İstanbul", 'district': "Merkez", 'address': ""
+        }
+
+
+def get_receiver_info(doc, customer_doc, customer_address, profile_type):
+    """Alıcı bilgilerini al"""
+    try:
+        full_name = customer_doc.customer_name or doc.customer_name or ""
+        parts = full_name.strip().split(None, 1)
+        first_name = parts[0] if len(parts) > 0 else ""
+        last_name = parts[1] if len(parts) > 1 else ""
+
+        individual_fields = ""
+        if profile_type == "EARSIVFATURA" and first_name:
+            individual_fields = f"""
+    <SahisAd>{first_name}</SahisAd>
+    <SahisSoyad>{last_name}</SahisSoyad>"""
+
+        return {
+            'id_type': "VKN" if len(doc.tax_id or "") == 10 else "TC",
+            'id_number': doc.tax_id or "",
+            'phone': customer_doc.mobile_no or "",
+            'email': customer_doc.email_id or "",
+            'tax_office': customer_doc.custom_tax_office if profile_type == "EFATURA" else "",
+            'country': customer_address.country if customer_address else "Türkiye",
+            'city': customer_address.city if customer_address else "",
+            'district': customer_address.county if customer_address else "",
+            'address': f"{customer_address.address_line1 or ''} {customer_address.address_line2 or ''}".strip() if customer_address else "",
+            'individual_fields': individual_fields
+        }
+    except:
+        return {
+            'id_type': "TC", 'id_number': "", 'phone': "", 'email': "",
+            'tax_office': "", 'country': "Türkiye", 'city': "", 'district': "",
+            'address': "", 'individual_fields': ""
+        }
+
+
+
+def generate_invoice_xml(doc, profile_type, settings):
+    import html
+    import uuid
+    import json
+
+    uuid_str = str(uuid.uuid4()).upper()
+
+    if profile_type == "EARSIVFATURA":
+        xml_profile = "EARSIVFATURA"
+        scenario = "SATIS"
+    else:
+        xml_profile = "EFATURA"
+        scenario = doc.custom_scenario_type or "SATIS"
+
+    invoice_type = doc.custom_invoice_type or "SATIS"
+    net_total = float(doc.net_total or 0)
+    grand_total = float(doc.grand_total or 0)
+    toplam_iskonto = sum([item.discount_amount or 0 for item in doc.items])
+
+    customer_doc = frappe.get_doc("Customer", doc.customer)
+
+    customer_address = None
+    if doc.customer_address:
+        try:
+            customer_address = frappe.get_doc("Address", doc.customer_address)
+        except:
+            pass
+
+    sender_info = get_sender_info(settings)
+    receiver_info = get_receiver_info(doc, customer_doc, customer_address, profile_type)
+
+    sender_info['tax_id'] = sender_info.get('tax_id') or "2222222222"
+    sender_info['company_name'] = sender_info.get('company_name') or "Test"
+    sender_info['phone'] = sender_info.get('phone') or "0555 555 5555"
+    sender_info['email'] = sender_info.get('email') or "info@test.com"
+    sender_info['city'] = sender_info.get('city') or "Istanbul"
+    sender_info['district'] = sender_info.get('district') or "Ataköy"
+    sender_info['address'] = sender_info.get('address') or "testcaddesi 5 4"
+    sender_info['country'] = "Türkiye"
+
+    receiver_info['phone'] = receiver_info.get('phone') or "+90505 555 5555"
+    receiver_info['email'] = receiver_info.get('email') or "musteri@example.com"
+    receiver_info['city'] = receiver_info.get('city') or "t"
+    receiver_info['district'] = receiver_info.get('district') or "Merkez"
+    receiver_info['address'] = receiver_info.get('address') or "t t"
+    receiver_info['country'] = "Türkiye"
+    receiver_info['individual_fields'] = ""
+
+    if profile_type == "EFATURA" and scenario == "IHRACAT":
+        receiver_info['individual_fields'] = """
+    <SahisAd>Mehmet</SahisAd>
+    <SahisSoyad>Yılmaz</SahisSoyad>"""
+
+    item_tax_map = {}
+    for tax in doc.taxes:
+        if tax.item_wise_tax_detail:
+            try:
+                parsed = json.loads(tax.item_wise_tax_detail)
+                for item_name, (rate, amount) in parsed.items():
+                    item_tax_map[item_name] = {
+                        "rate": rate,
+                        "amount": amount
+                    }
+            except:
+                continue
+
+    def generate_ihracat_satir(i, item):
+        istisna_kodu = item.custom_istısna_kalemleri 
+        kap_marka = item.custom_kabin_markası 
+        kap_cinsi = item.custom_kap_cinsi 
+        kap_no = item.custom_kap_no 
+        kap_adedi = item.custom_kap_adedi 
+        gumruk_takip_no = doc.custom_gümrük_takip_no 
+        teslim_sarti = doc.incoterm 
+        gonderim_sekli = (doc.custom_gönderim_sekli).split(" ")[0]
+
+        return f'''
+  <FaturaSatir>
+    <SatirNo>{i+1}</SatirNo>
+    <UrunAdi>{html.escape(item.item_name)}</UrunAdi>
+    <UrunKodu>{html.escape(item.item_code)}</UrunKodu>
+    <OlcuBirimi>{item.uom}</OlcuBirimi>
+    <BirimFiyati ParaBirimi="{doc.currency}">{item.rate}</BirimFiyati>
+    <Miktar>{item.qty}</Miktar>
+    <Vergi>
+      <ToplamVergiTutar ParaBirimi="{doc.currency}">0.00</ToplamVergiTutar>
+      <FaturaVergiDetay>
+        <MatrahTutar ParaBirimi="{doc.currency}">{item.amount:.2f}</MatrahTutar>
+        <VergiTutar ParaBirimi="{doc.currency}">0.00</VergiTutar>
+        <VergiOran>0</VergiOran>
+        <Kategori>
+          <VergiAdi>KDV</VergiAdi>
+          <VergiKodu>0015</VergiKodu>
+        </Kategori>
+      </FaturaVergiDetay>
+    </Vergi>
+    <Istisna>
+      <IstisnaKodu>{istisna_kodu}</IstisnaKodu>
+      <Ihracat>
+        <Gtip>12345678901{i}</Gtip>
+        <GonderimSekli>{gonderim_sekli}</GonderimSekli>
+        <TeslimSarti>{teslim_sarti}</TeslimSarti>
+        <GumrukTakipNo>{gumruk_takip_no}</GumrukTakipNo>
+        <KapMarka>{kap_marka}</KapMarka>
+        <KapCinsi>{kap_cinsi}</KapCinsi>
+        <KapNo>{kap_no}</KapNo>
+        <KapAdedi>{kap_adedi}</KapAdedi>
+      </Ihracat>
+    </Istisna>
+    <IskontoOrani>0</IskontoOrani>
+    <IskontoTutari>0</IskontoTutari>
+  </FaturaSatir>'''
+
+    def generate_normal_satir(i, item):
+        return f'''
+  <FaturaSatir>
+    <SatirNo>{i+1}</SatirNo>
+    <UrunAdi>{html.escape(item.item_name)}</UrunAdi>
+    <UrunKodu>{html.escape(item.item_code)}</UrunKodu>
+    <OlcuBirimi>{item.uom}</OlcuBirimi>
+    <BirimFiyati ParaBirimi="{doc.currency}">{item.rate}</BirimFiyati>
+    <Miktar>{item.qty}</Miktar>
+    <Vergi>
+      <ToplamVergiTutar ParaBirimi="{doc.currency}">{item_tax_map.get(item.item_name, {}).get('amount', 0):.2f}</ToplamVergiTutar>
+      <FaturaVergiDetay>
+        <MatrahTutar ParaBirimi="{doc.currency}">{item.amount:.2f}</MatrahTutar>
+        <VergiTutar ParaBirimi="{doc.currency}">{item_tax_map.get(item.item_name, {}).get('amount', 0):.2f}</VergiTutar>
+        <VergiOran>{item_tax_map.get(item.item_name, {}).get('rate', 20.0):.2f}</VergiOran>
+        <Kategori>
+          <VergiAdi>KDV</VergiAdi>
+        </Kategori>
+      </FaturaVergiDetay>
+    </Vergi>
+    <IskontoOrani>0</IskontoOrani>
+    <IskontoTutari>0</IskontoTutari>
+  </FaturaSatir>'''
+
+    satirlar = "".join([
+        generate_ihracat_satir(i, item) if profile_type == "EFATURA" and scenario == "IHRACAT"
+        else generate_normal_satir(i, item)
+        for i, item in enumerate(doc.items)
+    ])
+
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<Fatura xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <Profil>{xml_profile}</Profil>
+  <Senaryo>{scenario}</Senaryo>
+  <No>{doc.name}</No>
+  <UUID>{uuid_str}</UUID>
+  <Tarih>{doc.posting_date}</Tarih>
+  <Zaman>{doc.posting_time or '12:00:00'}</Zaman>
+  <Tip>{invoice_type}</Tip>
+  <ParaBirimi>{doc.currency or 'TRY'}</ParaBirimi>
+  <SatirSayisi>{len(doc.items)}</SatirSayisi>
+
+  <FaturaSahibi>
+    <VknTc>VKN</VknTc>
+    <VknTcNo>{sender_info['tax_id']}</VknTcNo>
+    <Unvan>{html.escape(sender_info['company_name'])}</Unvan>
+    <Tel>{sender_info['phone']}</Tel>
+    <Eposta>{sender_info['email']}</Eposta>
+    <VergiDairesi>{sender_info['tax_office']}</VergiDairesi>
+    <Ulke>{sender_info['country']}</Ulke>
+    <Sehir>{sender_info['city']}</Sehir>
+    <Ilce>{sender_info['district']}</Ilce>
+    <AdresMahCad>{sender_info['address']}</AdresMahCad>
+  </FaturaSahibi>
+
+  <FaturaAlici>
+    <VknTc>{receiver_info['id_type']}</VknTc>
+    <VknTcNo>{receiver_info['id_number']}</VknTcNo>
+    <Tel>{receiver_info['phone']}</Tel>
+    <Eposta>{receiver_info['email']}</Eposta>
+    <VergiDairesi>{receiver_info['tax_office']}</VergiDairesi>
+    <Ulke>{receiver_info['country']}</Ulke>
+    <Sehir>{receiver_info['city']}</Sehir>
+    <Ilce>{receiver_info['district']}</Ilce>
+    <AdresMahCad>{receiver_info['address']}</AdresMahCad>{receiver_info['individual_fields']}
+  </FaturaAlici>
+{satirlar}
+
+  <ToplamVergiHaricTutar ParaBirimi="{doc.currency}">{net_total:.2f}</ToplamVergiHaricTutar>
+  <ToplamVergiDahilTutar ParaBirimi="{doc.currency}">{grand_total:.2f}</ToplamVergiDahilTutar>
+  <ToplamIskontoTutar ParaBirimi="{doc.currency}">0</ToplamIskontoTutar>
+  <OdenecekTutar ParaBirimi="{doc.currency}">{grand_total:.2f}</OdenecekTutar>
+  <DovizKuru>1</DovizKuru>
+  <ArsivTanim>
+    <GonderimTarihi>{doc.posting_date}</GonderimTarihi>
+    <GonderimTuru>ELEKTRONIK</GonderimTuru>
+    <InternetSatis>True</InternetSatis>
+    <OdemeTarihi>{doc.posting_date}</OdemeTarihi>
+    <OdemeAdi>Online</OdemeAdi>
+    <OdemeTuru>KREDIKARTI/BANKAKARTI</OdemeTuru>
+    <WebAdresi>www.example.com</WebAdresi>
+    <TasiyiciVkn>9860008925</TasiyiciVkn>
+    <TasiyiciUnvan>Yurtiçi Kargo</TasiyiciUnvan>
+  </ArsivTanim>
+</Fatura>"""
+
+def create_soap_body(zip_base64, integrator, file_name="invoice.zip", receiver_id="22222222222"):
+    password = integrator.get_password('password') if hasattr(integrator, 'get_password') else integrator.password
+    user_id = integrator.username
+    return f"""<?xml version="1.0" encoding="utf-8"?>
+<soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                 xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                 xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
+  <soap12:Body>
+    <sendData xmlns="http://tempuri.org/">
+      <document xmlns:d4p1="http://schemas.datacontract.org/2004/07/" xmlns:i="http://www.w3.org/2001/XMLSchema-instance">
+        <d4p1:DocumentID i:nil="true" />
+        <d4p1:DocumentVariable>efaturaozel</d4p1:DocumentVariable>
+        <d4p1:IsRead>false</d4p1:IsRead>
+        <d4p1:ReceiverID>{receiver_id}</d4p1:ReceiverID>
+        <d4p1:ReturnCode i:nil="true" />
+        <d4p1:ReturnText i:nil="true" />
+        <d4p1:SenderID i:nil="true" />
+        <d4p1:UUID i:nil="true" />
+        <d4p1:UserID>{user_id}</d4p1:UserID>
+        <d4p1:UserPassword>{password}</d4p1:UserPassword>
+        <d4p1:binaryData>
+          <d4p1:FileByte>{zip_base64}</d4p1:FileByte>
+          <d4p1:FileName>{file_name}</d4p1:FileName>
+        </d4p1:binaryData>
+        <d4p1:fileName>{file_name}</d4p1:fileName>
+      </document>
+    </sendData>
+  </soap12:Body>
+</soap12:Envelope>"""
+
 
 
 @frappe.whitelist()
 def send_custom_xml_to_finalizer(xml_string):
-    import io, zipfile, base64, requests
+    """Custom XML gönderme fonksiyonu - integrator bilgilerini kullanır"""
+    try:
+        settings = frappe.get_single("TD EInvoice Settings")
+        if not settings.integrator:
+            return {"status": "fail", "error": "Integrator not configured"}
+        
+        integrator = frappe.get_doc("TD EInvoice Integrator", settings.integrator)
+        if not integrator.td_enable:
+            return {"status": "fail", "error": "Integration is disabled"}
 
-    # XML'yi ZIP'e çevir
-    memory_zip = io.BytesIO()
-    with zipfile.ZipFile(memory_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("invoice.xml", xml_string)
-    zip_bytes = memory_zip.getvalue()
-    zip_base64 = base64.b64encode(zip_bytes).decode("utf-8")
+        import io, zipfile, base64, requests
 
-    # SOAP Body hazırla
-    soap_body = f"""<?xml version="1.0" encoding="utf-8"?>
+        memory_zip = io.BytesIO()
+        with zipfile.ZipFile(memory_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("invoice.xml", xml_string)
+        zip_bytes = memory_zip.getvalue()
+        zip_base64 = base64.b64encode(zip_bytes).decode("utf-8")
+
+        # Password'ü al (eğer yıldızlı ise get_password kullan)
+        password = integrator.get_password('password') if hasattr(integrator, 'get_password') else integrator.password
+
+        soap_body = f"""<?xml version="1.0" encoding="utf-8"?>
 <soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                  xmlns:xsd="http://www.w3.org/2001/XMLSchema"
                  xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
   <soap12:Body>
     <sendData xmlns="http://tempuri.org/">
       <document>
-        <UserID>24</UserID>
-        <UserPassword>kFaQ7yww45jVr7NnTHmGaA==</UserPassword>
+        <UserID>{integrator.username}</UserID>
+        <UserPassword>{password}</UserPassword>
         <ReceiverID>22222222222</ReceiverID>
         <DocumentVariable>efaturaozel</DocumentVariable>
         <fileName>invoice.zip</fileName>
@@ -1474,27 +1879,14 @@ def send_custom_xml_to_finalizer(xml_string):
   </soap12:Body>
 </soap12:Envelope>"""
 
-    headers = {
-        "Content-Type": "application/soap+xml; charset=utf-8; action=\"http://tempuri.org/IEBelge/sendData\""
-    }
+        headers = {
+            "Content-Type": "application/soap+xml; charset=utf-8; action=\"http://tempuri.org/IEBelge/sendData\""
+        }
 
-    url = "https://app.finalizer.com.tr/services/EBelge.svc"
+        url = integrator.test_efatura_url if integrator.td_test else integrator.efatura_url
 
-    try:
         response = requests.post(url, data=soap_body.encode("utf-8"), headers=headers)
         response_text = response.text.strip()
-
-        # ✅ XML ve yanıt logla
-        frappe.log_error(
-            f"""🧾 Sent XML:
-{xml_string}
-
-📤 Finalizer Response:
-HTTP {response.status_code}
-{response_text}
-""",
-            "Custom Finalizer XML Send Log"
-        )
 
         return {
             "status": "success" if response.status_code == 200 else "fail",
@@ -1503,5 +1895,6 @@ HTTP {response.status_code}
         }
 
     except Exception as e:
-        frappe.log_error(str(e), "Custom Finalizer XML Send Error")
+        frappe.log_error(str(e), "Custom XML Send Error")
         return {"status": "fail", "error": str(e)}
+

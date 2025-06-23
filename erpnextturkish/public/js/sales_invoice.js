@@ -27,49 +27,59 @@ function EInvoiceProcess(frm, strOperation) {
     });
 }
 
-frappe.ui.form.on("Sales Invoice", {
-	refresh: (frm) => {
-        //Get einvoice.enable settings
-        var prmEInvoiceEnable = frappe.db.get_single_value("EFatura Ayarlar", "td_enable");
-        Promise.all([prmEInvoiceEnable]).then(function(objResult) {
-            if (objResult && objResult.length == 1 && objResult[0] === 1) {
-                if (frm.doc.docstatus == 1 && !(cint(frm.doc.is_return) && frm.doc.return_against)) {
-                    frm.add_custom_button(__('Gönder'),
-                        function() {
-                            EInvoiceProcess(frm, "Send");
-                        }, __('E-Fatura'));
-                    frm.add_custom_button(__('Durum Güncelle'),
-                        function() {
-                            EInvoiceProcess(frm, "Refresh");
-                        }, __('E-Fatura'));
-                    frm.page.set_inner_btn_group_as_primary(__('E-Fatura'));
-                }
-            }
-        });
-    }
-});
-
 frappe.ui.form.on('Sales Invoice', {
     refresh(frm) {
         if (!frm.is_new()) {
-            frm.add_custom_button(__('Finalizer Gönder'), () => {
-                frappe.call({
-                    method: 'erpnextturkish.td_utils.send_invoice_to_finalizer',
-                    args: { invoice_name: frm.doc.name },
-                    callback(r) {
-                        if (!r.exc) {
-                            const msg = r.message.status === 'success'
-                                ? `✅ Gönderim başarılı<br><pre>${frappe.utils.escape_html(r.message.response)}</pre>`
-                                : `❌ Hata<br><pre>${frappe.utils.escape_html(r.message.error || r.message.response)}</pre>`;
-                            frappe.msgprint({
-                                title: __('Finalizer Yanıtı'),
-                                indicator: r.message.status === 'success' ? 'green' : 'red',
-                                message: msg
+            frappe.db.get_single_value('TD EInvoice Settings', 'integrator')
+                .then(integrator_name => {
+                    if (integrator_name) {
+                        return frappe.db.get_value('TD EInvoice Integrator', integrator_name, 'td_enable');
+                    }
+                    return null;
+                })
+                .then(result => {
+                    if (result?.message?.td_enable) {
+                        frm.add_custom_button(__('E-Invoice'), null, __('Actions'));
+
+                        // ⬇ Send
+                        frm.add_custom_button(__('Send'), () => {
+                            frappe.call({
+                                method: 'erpnextturkish.td_utils.send_invoice_to_finalizer',
+                                args: { invoice_name: frm.doc.name },
+                                callback(r) {
+                                    if (!r.exc) {
+                                        const result = r.message;
+                                        frappe.msgprint({
+                                            title: result.status === 'success' ? __('Success') : __('Send Error'),
+                                            indicator: result.status === 'success' ? 'green' : 'red',
+                                            message: result.status === 'success'
+                                                ? '✅ Invoice sent successfully'
+                                                : `❌ ${result.error || 'Send failed'}`
+                                        });
+                                        frm.reload_doc();
+                                    }
+                                }
                             });
-                        }
+                        }, __('E-Invoice'));
+
+                        // ⬇ Update Status
+                        frm.add_custom_button(__('Update Status'), () => {
+                            frappe.call({
+                                method: 'erpnextturkish.td_utils.update_invoice_status',
+                                args: { invoice_name: frm.doc.name },
+                                callback(r) {
+                                    if (!r.exc) {
+                                        frappe.msgprint({
+                                            title: __('Status Update'),
+                                            indicator: 'blue',
+                                            message: r.message.message || 'Status updated.'
+                                        });
+                                    }
+                                }
+                            });
+                        }, __('E-Invoice'));
                     }
                 });
-            });
         }
     }
 });

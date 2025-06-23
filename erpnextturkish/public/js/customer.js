@@ -27,3 +27,4 @@ frappe.ui.form.on("Customer", {
         EInvoiceProcess(frm, "GetUserAliasses")
     }
 });
+
