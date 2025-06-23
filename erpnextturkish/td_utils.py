@@ -1604,6 +1604,8 @@ def get_receiver_info(doc, customer_doc, customer_address, profile_type):
 
 
 
+
+
 def generate_invoice_xml(doc, profile_type, settings):
     import html
     import uuid
@@ -1673,12 +1675,14 @@ def generate_invoice_xml(doc, profile_type, settings):
     def generate_ihracat_satir(i, item):
         istisna_kodu = item.custom_istısna_kalemleri 
         kap_marka = item.custom_kabin_markası 
-        kap_cinsi = item.custom_kap_cinsi 
+        kap_cinsi_raw = item.custom_kap_cinsi 
+        kap_cinsi = kap_cinsi_raw.strip()[:2].upper()
         kap_no = item.custom_kap_no 
         kap_adedi = item.custom_kap_adedi 
         gumruk_takip_no = doc.custom_gümrük_takip_no 
         teslim_sarti = doc.incoterm 
         gonderim_sekli = (doc.custom_gönderim_sekli).split(" ")[0]
+        gtip = item.custom_gtip or f"12345678901{i}"
 
         return f'''
   <FaturaSatir>
@@ -1703,7 +1707,7 @@ def generate_invoice_xml(doc, profile_type, settings):
     <Istisna>
       <IstisnaKodu>{istisna_kodu}</IstisnaKodu>
       <Ihracat>
-        <Gtip>12345678901{i}</Gtip>
+        <Gtip>{gtip}</Gtip>
         <GonderimSekli>{gonderim_sekli}</GonderimSekli>
         <TeslimSarti>{teslim_sarti}</TeslimSarti>
         <GumrukTakipNo>{gumruk_takip_no}</GumrukTakipNo>
@@ -1712,6 +1716,35 @@ def generate_invoice_xml(doc, profile_type, settings):
         <KapNo>{kap_no}</KapNo>
         <KapAdedi>{kap_adedi}</KapAdedi>
       </Ihracat>
+    </Istisna>
+    <IskontoOrani>0</IskontoOrani>
+    <IskontoTutari>0</IskontoTutari>
+  </FaturaSatir>'''
+
+    def generate_istisna_satir(i, item):
+        istisna_kodu = item.custom_istısna_kalemleri or "301"
+        return f'''
+  <FaturaSatir>
+    <SatirNo>{i+1}</SatirNo>
+    <UrunAdi>{html.escape(item.item_name)}</UrunAdi>
+    <UrunKodu>{html.escape(item.item_code)}</UrunKodu>
+    <OlcuBirimi>{item.uom}</OlcuBirimi>
+    <BirimFiyati ParaBirimi="{doc.currency}">{item.rate}</BirimFiyati>
+    <Miktar>{item.qty}</Miktar>
+    <Vergi>
+      <ToplamVergiTutar ParaBirimi="{doc.currency}">0.00</ToplamVergiTutar>
+      <FaturaVergiDetay>
+        <MatrahTutar ParaBirimi="{doc.currency}">{item.amount:.2f}</MatrahTutar>
+        <VergiTutar ParaBirimi="{doc.currency}">0.00</VergiTutar>
+        <VergiOran>0.00</VergiOran>
+        <Kategori>
+          <VergiAdi>KDV</VergiAdi>
+          <VergiKodu>0015</VergiKodu>
+        </Kategori>
+      </FaturaVergiDetay>
+    </Vergi>
+    <Istisna>
+      <IstisnaKodu>{istisna_kodu}</IstisnaKodu>
     </Istisna>
     <IskontoOrani>0</IskontoOrani>
     <IskontoTutari>0</IskontoTutari>
@@ -1734,6 +1767,7 @@ def generate_invoice_xml(doc, profile_type, settings):
         <VergiOran>{item_tax_map.get(item.item_name, {}).get('rate', 20.0):.2f}</VergiOran>
         <Kategori>
           <VergiAdi>KDV</VergiAdi>
+          <VergiKodu>0015</VergiKodu>
         </Kategori>
       </FaturaVergiDetay>
     </Vergi>
@@ -1741,13 +1775,18 @@ def generate_invoice_xml(doc, profile_type, settings):
     <IskontoTutari>0</IskontoTutari>
   </FaturaSatir>'''
 
-    satirlar = "".join([
-        generate_ihracat_satir(i, item) if profile_type == "EFATURA" and scenario == "IHRACAT"
-        else generate_normal_satir(i, item)
-        for i, item in enumerate(doc.items)
-    ])
+    # Satır tipi belirleme ve XML üretme
+    if scenario == "IHRACAT":
+        satirlar = "".join([generate_ihracat_satir(i, item) for i, item in enumerate(doc.items)])
+    elif invoice_type == "ISTISNA":
+        satirlar = "".join([generate_istisna_satir(i, item) for i, item in enumerate(doc.items)])
+        # İstisna durumunda toplam vergi dahil tutar 0 olacak
+        grand_total = net_total
+    else:
+        satirlar = "".join([generate_normal_satir(i, item) for i, item in enumerate(doc.items)])
 
-    return f"""<?xml version="1.0" encoding="UTF-8"?>
+    # XML template
+    xml_template = f"""<?xml version="1.0"?>
 <Fatura xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <Profil>{xml_profile}</Profil>
   <Senaryo>{scenario}</Senaryo>
@@ -1758,38 +1797,40 @@ def generate_invoice_xml(doc, profile_type, settings):
   <Tip>{invoice_type}</Tip>
   <ParaBirimi>{doc.currency or 'TRY'}</ParaBirimi>
   <SatirSayisi>{len(doc.items)}</SatirSayisi>
-
   <FaturaSahibi>
     <VknTc>VKN</VknTc>
     <VknTcNo>{sender_info['tax_id']}</VknTcNo>
     <Unvan>{html.escape(sender_info['company_name'])}</Unvan>
     <Tel>{sender_info['phone']}</Tel>
     <Eposta>{sender_info['email']}</Eposta>
-    <VergiDairesi>{sender_info['tax_office']}</VergiDairesi>
+    <VergiDairesi>{sender_info.get('tax_office', 'Türk Vergi Dairesi')}</VergiDairesi>
     <Ulke>{sender_info['country']}</Ulke>
     <Sehir>{sender_info['city']}</Sehir>
     <Ilce>{sender_info['district']}</Ilce>
     <AdresMahCad>{sender_info['address']}</AdresMahCad>
   </FaturaSahibi>
-
   <FaturaAlici>
-    <VknTc>{receiver_info['id_type']}</VknTc>
-    <VknTcNo>{receiver_info['id_number']}</VknTcNo>
+    <VknTc>{receiver_info.get('id_type', 'VKN')}</VknTc>
+    <VknTcNo>{receiver_info.get('id_number', '3881416132')}</VknTcNo>
+    <Unvan>{html.escape(receiver_info.get('company_name', customer_doc.customer_name))}</Unvan>
     <Tel>{receiver_info['phone']}</Tel>
     <Eposta>{receiver_info['email']}</Eposta>
-    <VergiDairesi>{receiver_info['tax_office']}</VergiDairesi>
+    <VergiDairesi>{receiver_info.get('tax_office', 'Başakşehir Vergi Dairesi')}</VergiDairesi>
     <Ulke>{receiver_info['country']}</Ulke>
     <Sehir>{receiver_info['city']}</Sehir>
     <Ilce>{receiver_info['district']}</Ilce>
     <AdresMahCad>{receiver_info['address']}</AdresMahCad>{receiver_info['individual_fields']}
   </FaturaAlici>
 {satirlar}
-
-  <ToplamVergiHaricTutar ParaBirimi="{doc.currency}">{net_total:.2f}</ToplamVergiHaricTutar>
-  <ToplamVergiDahilTutar ParaBirimi="{doc.currency}">{grand_total:.2f}</ToplamVergiDahilTutar>
+  <ToplamVergiHaricTutar ParaBirimi="{doc.currency}">{net_total:.0f}</ToplamVergiHaricTutar>
+  <ToplamVergiDahilTutar ParaBirimi="{doc.currency}">{grand_total:.0f}</ToplamVergiDahilTutar>
   <ToplamIskontoTutar ParaBirimi="{doc.currency}">0</ToplamIskontoTutar>
-  <OdenecekTutar ParaBirimi="{doc.currency}">{grand_total:.2f}</OdenecekTutar>
-  <DovizKuru>1</DovizKuru>
+  <OdenecekTutar ParaBirimi="{doc.currency}">{grand_total:.0f}</OdenecekTutar>
+  <DovizKuru>1</DovizKuru>"""
+
+    # TEMELFATURA için ArsivTanim eklenmez, sadece TICARIFATURA için eklenir
+    if scenario == "TICARIFATURA" or xml_profile == "EARSIVFATURA":
+        xml_template += f"""
   <ArsivTanim>
     <GonderimTarihi>{doc.posting_date}</GonderimTarihi>
     <GonderimTuru>ELEKTRONIK</GonderimTuru>
@@ -1800,8 +1841,12 @@ def generate_invoice_xml(doc, profile_type, settings):
     <WebAdresi>www.example.com</WebAdresi>
     <TasiyiciVkn>9860008925</TasiyiciVkn>
     <TasiyiciUnvan>Yurtiçi Kargo</TasiyiciUnvan>
-  </ArsivTanim>
+  </ArsivTanim>"""
+
+    xml_template += """
 </Fatura>"""
+
+    return xml_template
 
 def create_soap_body(zip_base64, integrator, file_name="invoice.zip", receiver_id="22222222222"):
     password = integrator.get_password('password') if hasattr(integrator, 'get_password') else integrator.password
