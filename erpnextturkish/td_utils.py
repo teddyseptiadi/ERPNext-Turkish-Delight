@@ -1613,6 +1613,8 @@ def generate_invoice_xml(doc, profile_type, settings):
 
     uuid_str = str(uuid.uuid4()).upper()
 
+    frappe.db.set_value("Sales Invoice", doc.name, "td_efatura_uuid", uuid_str)
+
     if profile_type == "EARSIVFATURA":
         xml_profile = "EARSIVFATURA"
         scenario = "SATIS"
@@ -1790,7 +1792,7 @@ def generate_invoice_xml(doc, profile_type, settings):
 <Fatura xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <Profil>{xml_profile}</Profil>
   <Senaryo>{scenario}</Senaryo>
-  <No>{doc.name}</No>
+  <No></No>
   <UUID>{uuid_str}</UUID>
   <Tarih>{doc.posting_date}</Tarih>
   <Zaman>{doc.posting_time or '12:00:00'}</Zaman>
@@ -1943,3 +1945,406 @@ def send_custom_xml_to_finalizer(xml_string):
         frappe.log_error(str(e), "Custom XML Send Error")
         return {"status": "fail", "error": str(e)}
 
+import frappe
+import zipfile
+import io
+import base64
+import requests
+import uuid
+import json
+import html
+
+
+@frappe.whitelist()
+def send_delivery_note_to_finalizer(delivery_note_name=None):
+    """E-İrsaliye gönderme fonksiyonu"""
+    if not delivery_note_name:
+        return {"status": "fail", "error": "Delivery Note name is required"}
+
+    try:
+        settings = frappe.get_single("TD EInvoice Settings")
+        if not settings.integrator:
+            return {"status": "fail", "error": "Integrator not configured"}
+        
+        integrator = frappe.get_doc("TD EInvoice Integrator", settings.integrator)
+        if not integrator.td_enable:
+            return {"status": "fail", "error": "Integration is disabled"}
+
+        doc_dn = frappe.get_doc("Delivery Note", delivery_note_name)
+        
+        # Müşteri bilgilerini kontrol et
+        customer = frappe.get_doc("Customer", doc_dn.customer)
+        if integrator.td_enable:
+            missing_fields = []
+            if not customer.tax_id:
+                missing_fields.append("Tax ID (tax_id)")
+            if not customer.custom_tax_office:
+                missing_fields.append("Tax Office (custom_tax_office)")
+            if not doc_dn.customer_address:
+                missing_fields.append("Customer Address (customer_address)")
+
+            if missing_fields:
+                frappe.throw(
+                    "E-İrsaliye integration is enabled. The following fields are missing:<br><ul><li>" +
+                    "</li><li>".join(missing_fields) +
+                    "</li></ul>"
+                )
+
+        receiver_id = customer.tax_id or doc_dn.customer_name
+        if not receiver_id:
+            return {"status": "fail", "error": "Tax ID (receiver_id) is required"}
+
+        # E-İrsaliye XML oluştur
+        xml_content = generate_delivery_note_xml(doc_dn, settings)
+
+        # ZIP dosyası oluştur
+        mem = io.BytesIO()
+        with zipfile.ZipFile(mem, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(f"{doc_dn.name}.xml", xml_content)
+        zip_base64 = base64.b64encode(mem.getvalue()).decode()
+
+        # SOAP body oluştur
+        soap_body = create_eirsaliye_soap_body(zip_base64, integrator, f"{doc_dn.name}.zip", receiver_id)
+        url = integrator.test_efatura_url if integrator.td_test else integrator.efatura_url
+
+        headers = {
+            "Content-Type": 'application/soap+xml; charset=utf-8; action="http://tempuri.org/IEBelge/sendData"'
+        }
+        
+        resp = requests.post(url, data=soap_body.encode("utf-8"), headers=headers, timeout=60)
+
+        # Log kaydet
+        frappe.log_error(
+            f"""📦 E-İrsaliye Gönderildi
+📄 Sent XML:\n{xml_content}
+
+📤 Finalizer Response:
+HTTP {resp.status_code}
+{resp.text}""",
+            f"E-İrsaliye Result - {delivery_note_name}"
+        )
+
+        # Yorum ekle
+        add_comment_to_delivery_note(delivery_note_name, resp.text, resp.status_code)
+
+        is_success = check_response_success(resp.status_code, resp.text)
+
+        return {
+            "status": "success" if is_success else "fail",
+            "http_status": resp.status_code,
+            "response": resp.text
+        }
+
+    except Exception as e:
+        frappe.log_error(str(e), f"E-İrsaliye Send Error - {delivery_note_name}")
+        return {"status": "fail", "error": str(e)}
+
+
+def generate_delivery_note_xml(doc, settings):
+    """E-İrsaliye XML oluştur"""
+    import uuid
+
+    uuid_str = str(uuid.uuid4()).upper()
+
+    # doc içine yaz, sonra save et → sayfa yenilemeden görünür olur
+    doc.custom_td_eirsaliye_uuid = uuid_str
+    doc.save()
+
+    # Müşteri bilgileri
+    customer_doc = frappe.get_doc("Customer", doc.customer)
+    customer_address = None
+    if doc.customer_address:
+        try:
+            customer_address = frappe.get_doc("Address", doc.customer_address)
+        except:
+            pass
+
+    # Gönderici bilgileri
+    sender_info = get_sender_info(settings)
+
+    # Alıcı bilgileri
+    receiver_info = {
+        'tax_id': customer_doc.tax_id,
+        'company_name': customer_doc.customer_name,
+        'phone': customer_doc.mobile_no or "0555 555 5555",
+        'email': customer_doc.email_id or "info@test.com",
+        'tax_office': customer_doc.custom_tax_office,
+        'city': customer_address.city if customer_address else "İstanbul",
+        'district': customer_address.county if customer_address else "Başakşehir",
+        'address': f"{customer_address.address_line1 or ''} {customer_address.address_line2 or ''}".strip() if customer_address else "Test Adres",
+        'country': customer_address.country if customer_address else "Türkiye"
+    }
+
+    # Şoför adı soyadı ayır
+    sofor_adi = "SOFOR"
+    sofor_soyadi = "BILINMIYOR"
+    sofor_tc = "12345678901"
+    plaka = "34ABC123"
+
+    if doc.driver:
+        try:
+            driver_doc = frappe.get_doc("Driver", doc.driver)
+
+            if driver_doc.driver_name:
+                ad_soyad = driver_doc.driver_name.strip().split()
+                if len(ad_soyad) >= 2:
+                    sofor_adi = " ".join(ad_soyad[:-1])
+                    sofor_soyadi = ad_soyad[-1]
+                else:
+                    sofor_adi = ad_soyad[0]
+
+            if driver_doc.tc_no:
+                sofor_tc = driver_doc.custom_driver_id
+            if driver_doc.license_number:
+                plaka = driver_doc.license_number
+        except:
+            pass
+
+    # Gönderici bilgileri
+    sender_info = get_sender_info(settings)
+
+    # Alıcı bilgileri
+    receiver_info = {
+        'tax_id': customer_doc.tax_id,
+        'company_name': customer_doc.customer_name,
+        'phone': customer_doc.mobile_no or "0555 555 5555",
+        'email': customer_doc.email_id or "info@test.com",
+        'tax_office': customer_doc.custom_tax_office,
+        'city': customer_address.city if customer_address else "İstanbul",
+        'district': customer_address.county if customer_address else "Başakşehir",
+        'address': f"{customer_address.address_line1 or ''} {customer_address.address_line2 or ''}".strip() if customer_address else "Test Adres",
+        'country': customer_address.country if customer_address else "Türkiye"
+    }
+
+    # Şoför adı soyadı ayır
+    sofor_adi = "SOFOR"
+    sofor_soyadi = "BILINMIYOR"
+    sofor_tc = "12345678901"
+    plaka = "34ABC123"
+
+    if doc.driver:
+        try:
+            driver_doc = frappe.get_doc("Driver", doc.driver)
+
+            if driver_doc.driver_name:
+                ad_soyad = driver_doc.driver_name.strip().split()
+                if len(ad_soyad) >= 2:
+                    sofor_adi = " ".join(ad_soyad[:-1])
+                    sofor_soyadi = ad_soyad[-1]
+                else:
+                    sofor_adi = ad_soyad[0]
+
+            if driver_doc.tc_no:
+                sofor_tc = driver_doc.custom_driver_id
+            if driver_doc.license_number:
+                plaka = driver_doc.license_number
+        except:
+            pass
+
+    # Taşıyıcı VKN supplier'dan alınır
+    tasiyici_vkn = None
+    if doc.transporter:
+        try:
+            transporter_supplier = frappe.get_doc("Supplier", doc.transporter)
+            tasiyici_vkn = transporter_supplier.tax_id
+        except:
+            pass
+
+    # Taşıyıcı bilgileri
+    tasiyici_info = {
+        'tax_id': tasiyici_vkn or sender_info['tax_id'],
+        'company_name': doc.transporter_name or sender_info['company_name'],
+        'plaka': plaka,
+        'sofor_adi': sofor_adi,
+        'sofor_soyadi': sofor_soyadi,
+        'sofor_tc': sofor_tc,
+        'lr_no': doc.lr_no or ""
+    }
+
+    # Sevk bilgileri
+    sevk_info = {
+        'tarih': doc.posting_date or frappe.utils.today(),
+        'zaman': doc.posting_time or "12:00",
+        'siparis_tarihi': doc.posting_date or frappe.utils.today(),
+        'siparis_no': doc.name,
+        'belge_tarihi': doc.posting_date or frappe.utils.today(),
+        'belge_no': doc.name,
+        'posta_kodu': customer_address.pincode if customer_address else "34200"
+    }
+
+    # Satırlar
+    satirlar = ""
+    for i, item in enumerate(doc.items):
+        satirlar += f'''
+  <FaturaSatir>
+    <SatirNo>{i+1}</SatirNo>
+    <UrunAdi>{html.escape(item.item_name)}</UrunAdi>
+    <UrunKodu>{html.escape(item.item_code)}</UrunKodu>
+    <OlcuBirimi>{item.uom}</OlcuBirimi>
+    <BirimFiyati ParaBirimi="{doc.currency or 'TRY'}">{item.rate}</BirimFiyati>
+    <Miktar>{item.qty}</Miktar>
+  </FaturaSatir>'''
+
+    # Tutarları hesapla
+    net_total = getattr(doc, 'net_total', 0) or getattr(doc, 'total', 0) or 0
+    grand_total = getattr(doc, 'grand_total', 0) or getattr(doc, 'rounded_total', 0) or net_total
+    discount_amount = getattr(doc, 'discount_amount', 0) or 0
+
+    xml_template = f"""<?xml version="1.0"?>
+<Fatura xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <Profil>EIRSALIYE</Profil>
+  <Senaryo>TEMELIRSALIYE</Senaryo>
+  <No></No>
+  <UUID>{uuid_str}</UUID>
+  <Tarih>{doc.posting_date}</Tarih>
+  <Zaman>{doc.posting_time or '12:00:00'}</Zaman>
+  <Tip>SEVK</Tip>
+  <ParaBirimi>{doc.currency or 'TRY'}</ParaBirimi>
+  <SatirSayisi>{len(doc.items)}</SatirSayisi>
+  <FaturaSahibi>
+    <VknTc>VKN</VknTc>
+    <VknTcNo>{sender_info['tax_id']}</VknTcNo>
+    <Unvan>{html.escape(sender_info['company_name'])}</Unvan>
+    <Tel>5355765766</Tel>
+    <Eposta>testmail@test.com</Eposta>
+    <VergiDairesi>{sender_info['tax_office']}</VergiDairesi>
+    <Ulke>Türkiye</Ulke>
+    <Sehir>{sender_info['city']}</Sehir>
+    <Ilce>{sender_info['district']}</Ilce>
+    <AdresMahCad>{sender_info['address']}</AdresMahCad>
+  </FaturaSahibi>
+  <FaturaAlici>
+    <VknTc>VKN</VknTc>
+    <VknTcNo>{receiver_info['tax_id']}</VknTcNo>
+    <Unvan>{html.escape(receiver_info['company_name'])}</Unvan>
+    <Tel>{receiver_info['phone']}</Tel>
+    <Eposta>{receiver_info['email']}</Eposta>
+    <VergiDairesi>{receiver_info['tax_office']}</VergiDairesi>
+    <Ulke>{receiver_info['country']}</Ulke>
+    <Sehir>{receiver_info['city']}</Sehir>
+    <Ilce>Ataköy</Ilce>
+    <AdresMahCad>{receiver_info['address']}</AdresMahCad>
+  </FaturaAlici>
+  <Irsaliye>
+    <Tasiyici>
+      <VknTc>VKN</VknTc>
+      <VknTcNo>{tasiyici_info['tax_id']}</VknTcNo>
+      <Unvan>{html.escape(tasiyici_info['company_name'])}</Unvan>
+      <Plaka>{tasiyici_info['plaka']}</Plaka>
+      <SoforAdi>{tasiyici_info['sofor_adi']}</SoforAdi>
+      <SoforSoyadi>{tasiyici_info['sofor_soyadi']}</SoforSoyadi>
+      <SoforTcNo>{tasiyici_info['sofor_tc']}</SoforTcNo>
+    </Tasiyici>  
+    <Sevk>
+      <SevkTarihi>{sevk_info['tarih']}</SevkTarihi>
+      <SevkZamani>{sevk_info['zaman']}</SevkZamani>
+      <SiparisTarihi>{sevk_info['siparis_tarihi']}</SiparisTarihi>
+      <SiparisNo>{sevk_info['siparis_no']}</SiparisNo>
+      <BelgeTarihi>{sevk_info['belge_tarihi']}</BelgeTarihi>
+      <BelgeNo>{sevk_info['belge_no']}</BelgeNo>
+      <Ulke>{receiver_info['country']}</Ulke>
+      <Sehir>{receiver_info['city']}</Sehir>
+      <Ilce>Ataköy</Ilce>
+      <AdresMahCad>{receiver_info['address']}</AdresMahCad>
+      <PostaKodu>32200</PostaKodu>
+    </Sevk>   
+ </Irsaliye>
+{satirlar}
+  <ToplamVergiHaricTutar ParaBirimi="{doc.currency or 'TRY'}">{net_total}</ToplamVergiHaricTutar>
+  <ToplamVergiDahilTutar ParaBirimi="{doc.currency or 'TRY'}">{grand_total}</ToplamVergiDahilTutar>
+  <ToplamIskontoTutar ParaBirimi="{doc.currency or 'TRY'}">{discount_amount}</ToplamIskontoTutar>
+  <OdenecekTutar ParaBirimi="{doc.currency or 'TRY'}">{grand_total}</OdenecekTutar>
+  <DovizKuru>1</DovizKuru>
+</Fatura>"""
+
+    return xml_template
+
+
+
+def create_eirsaliye_soap_body(zip_base64, integrator, file_name="delivery.zip", receiver_id="3881416132"):
+    """E-İrsaliye SOAP body oluştur"""
+    password = integrator.get_password('password') if hasattr(integrator, 'get_password') else integrator.password
+    user_id = integrator.username
+    
+    return f"""<?xml version="1.0" encoding="utf-8"?>
+<soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                 xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                 xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
+  <soap12:Body>
+    <sendData xmlns="http://tempuri.org/">
+      <document xmlns:d4p1="http://schemas.datacontract.org/2004/07/" xmlns:i="http://www.w3.org/2001/XMLSchema-instance">
+        <d4p1:DocumentID i:nil="true" />
+        <d4p1:DocumentVariable>eirsaliyeozel</d4p1:DocumentVariable>
+        <d4p1:IsRead>false</d4p1:IsRead>
+        <d4p1:ReceiverID>{receiver_id}</d4p1:ReceiverID>
+        <d4p1:ReturnCode i:nil="true" />
+        <d4p1:ReturnText i:nil="true" />
+        <d4p1:SenderID i:nil="true" />
+        <d4p1:UUID i:nil="true" />
+        <d4p1:UserID>{user_id}</d4p1:UserID>
+        <d4p1:UserPassword>{password}</d4p1:UserPassword>
+        <d4p1:binaryData>
+          <d4p1:FileByte>{zip_base64}</d4p1:FileByte>
+          <d4p1:FileName>{file_name}</d4p1:FileName>
+        </d4p1:binaryData>
+        <d4p1:fileName>{file_name}</d4p1:fileName>
+      </document>
+    </sendData>
+  </soap12:Body>
+</soap12:Envelope>"""
+
+
+def add_comment_to_delivery_note(delivery_note_name, response_text, status_code):
+    """Delivery Note'a yorum ekle"""
+    try:
+        comment_text = f"E-İrsaliye Response (HTTP {status_code}):\n{response_text[:1000]}..."
+        frappe.get_doc({
+            "doctype": "Comment",
+            "comment_type": "Comment",
+            "reference_doctype": "Delivery Note",
+            "reference_name": delivery_note_name,
+            "content": comment_text
+        }).insert(ignore_permissions=True)
+    except:
+        pass
+
+
+def check_response_success(status_code, response_text):
+    """Response başarı kontrolü"""
+    if status_code != 200:
+        return False
+    
+    if "ReturnCode" in response_text:
+        try:
+            import re
+            return_code_match = re.search(r'<.*?ReturnCode.*?>(\d+)</', response_text)
+            if return_code_match:
+                return_code = int(return_code_match.group(1))
+                return return_code == 300
+        except:
+            pass
+    return True
+
+
+def get_sender_info(settings):
+    """Gönderici bilgilerini al"""
+    try:
+        company_doc = frappe.get_doc("Company", settings.company) if settings.company else None
+        
+        return {
+            'tax_id': settings.central_registration_system or company_doc.tax_id if company_doc else None,
+            'company_name': company_doc.company_name if company_doc else None,
+            'phone': company_doc.phone_no if company_doc else None,
+            'email': company_doc.email if company_doc else None,
+            'tax_office': settings.tax_office or "Merkez Vergi Dairesi",
+            'country': settings.country or "Türkiye",
+            'city': settings.city or "İstanbul",
+            'district': settings.district or "Merkez",
+            'address': f"{settings.street or ''} {settings.building_number or ''} {settings.door_number or ''}".strip()
+        }
+    except:
+        return {
+            'tax_id': None, 'company_name': None, 'phone': None, 'email': None,
+            'tax_office': "Merkez Vergi Dairesi", 'country': "Türkiye", 
+            'city': "İstanbul", 'district': "Merkez", 'address': ""
+        }

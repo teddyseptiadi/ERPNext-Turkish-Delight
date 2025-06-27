@@ -40,7 +40,8 @@ doctype_js = {
 	"Material Request": "public/js/material_request.js",
     "Stock Reconciliation": "public/js/stock_reconciliation.js",
 	"Item": "public/js/item.js",
-    "Sales Invoice" : "public/js/sales_invoice.js"
+    "Sales Invoice" : "public/js/sales_invoice.js",
+    "Delivery Note" : "public/js/delivery_note.js"
 }
 # Home Pages
 # ----------
