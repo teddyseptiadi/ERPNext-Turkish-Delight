@@ -1569,6 +1569,7 @@ def get_sender_info(settings):
         }
 
 
+
 def get_receiver_info(doc, customer_doc, customer_address, profile_type):
     """Alıcı bilgilerini al"""
     try:
@@ -1588,7 +1589,7 @@ def get_receiver_info(doc, customer_doc, customer_address, profile_type):
             'id_number': doc.tax_id or "",
             'phone': customer_doc.mobile_no or "",
             'email': customer_doc.email_id or "",
-            'tax_office': customer_doc.custom_tax_office if profile_type == "EFATURA" else "",
+            'tax_office': customer_doc.custom_tax_office or "",  # Profil tipine bakılmaksızın vergi dairesi al
             'country': customer_address.country if customer_address else "Türkiye",
             'city': customer_address.city if customer_address else "",
             'district': customer_address.county if customer_address else "",
@@ -1817,7 +1818,7 @@ def generate_invoice_xml(doc, profile_type, settings):
     <Unvan>{html.escape(receiver_info.get('company_name', customer_doc.customer_name))}</Unvan>
     <Tel>{receiver_info['phone']}</Tel>
     <Eposta>{receiver_info['email']}</Eposta>
-    <VergiDairesi>{receiver_info.get('tax_office', 'Başakşehir Vergi Dairesi')}</VergiDairesi>
+    <VergiDairesi>{receiver_info.get('tax_office', '')}</VergiDairesi>
     <Ulke>{receiver_info['country']}</Ulke>
     <Sehir>{receiver_info['city']}</Sehir>
     <Ilce>{receiver_info['district']}</Ilce>
