@@ -2041,17 +2041,15 @@ HTTP {resp.status_code}
         return {"status": "fail", "error": str(e)}
 
 
+
 def generate_delivery_note_xml(doc, settings):
     """E-İrsaliye XML oluştur"""
     import uuid
 
     uuid_str = str(uuid.uuid4()).upper()
-
-    # doc içine yaz, sonra save et → sayfa yenilemeden görünür olur
     doc.custom_td_eirsaliye_uuid = uuid_str
     doc.save()
 
-    # Müşteri bilgileri
     customer_doc = frappe.get_doc("Customer", doc.customer)
     customer_address = None
     if doc.customer_address:
@@ -2060,10 +2058,8 @@ def generate_delivery_note_xml(doc, settings):
         except:
             pass
 
-    # Gönderici bilgileri
     sender_info = get_sender_info(settings)
 
-    # Alıcı bilgileri
     receiver_info = {
         'tax_id': customer_doc.tax_id,
         'company_name': customer_doc.customer_name,
@@ -2076,73 +2072,53 @@ def generate_delivery_note_xml(doc, settings):
         'country': customer_address.country if customer_address else "Türkiye"
     }
 
-    # Şoför adı soyadı ayır
+    # Şoför bilgileri - Varsayılan değerler (try bloğundan ÖNCE tanımla)
     sofor_adi = "SOFOR"
     sofor_soyadi = "BILINMIYOR"
     sofor_tc = "12345678901"
-    plaka = "34ABC123"
+    plaka = ""  # Boş string olarak başlat
 
+    # Şoför bilgilerini dinamik olarak al
     if doc.driver:
         try:
             driver_doc = frappe.get_doc("Driver", doc.driver)
-
-            if driver_doc.driver_name:
+            print(f"Driver Doc: {driver_doc.as_dict()}")  # Debug için - tüm alanları göster
+            
+            # Şoför adı ve soyadı
+            if hasattr(driver_doc, 'driver_name') and driver_doc.driver_name:
                 ad_soyad = driver_doc.driver_name.strip().split()
                 if len(ad_soyad) >= 2:
                     sofor_adi = " ".join(ad_soyad[:-1])
                     sofor_soyadi = ad_soyad[-1]
-                else:
+                elif len(ad_soyad) == 1:
                     sofor_adi = ad_soyad[0]
+                    sofor_soyadi = "BILINMIYOR"
 
-            if driver_doc.tc_no:
-                sofor_tc = driver_doc.custom_driver_id
-            if driver_doc.license_number:
-                plaka = driver_doc.license_number
-        except:
-            pass
+            # TC Kimlik numarası - farklı alan adlarını kontrol et
+            if hasattr(driver_doc, 'tc_no') and driver_doc.tc_no:
+                sofor_tc = str(driver_doc.tc_no)
+            elif hasattr(driver_doc, 'custom_driver_id') and driver_doc.custom_driver_id:
+                sofor_tc = str(driver_doc.custom_driver_id)
+            elif hasattr(driver_doc, 'driver_id') and driver_doc.driver_id:
+                sofor_tc = str(driver_doc.driver_id)
 
-    # Gönderici bilgileri
-    sender_info = get_sender_info(settings)
+            # Plaka bilgisi - license_number alanından al (sizin durumunuzda bu doğru alan)
+            if hasattr(driver_doc, 'license_number') and driver_doc.license_number:
+                plaka = str(driver_doc.license_number)
+            elif hasattr(driver_doc, 'license_plate') and driver_doc.license_plate:
+                plaka = str(driver_doc.license_plate)
+            elif hasattr(driver_doc, 'custom_license_plate') and driver_doc.custom_license_plate:
+                plaka = str(driver_doc.custom_license_plate)
+            elif hasattr(driver_doc, 'vehicle_no') and driver_doc.vehicle_no:
+                plaka = str(driver_doc.vehicle_no)
 
-    # Alıcı bilgileri
-    receiver_info = {
-        'tax_id': customer_doc.tax_id,
-        'company_name': customer_doc.customer_name,
-        'phone': customer_doc.mobile_no or "0555 555 5555",
-        'email': customer_doc.email_id or "info@test.com",
-        'tax_office': customer_doc.custom_tax_office,
-        'city': customer_address.city if customer_address else "İstanbul",
-        'district': customer_address.county if customer_address else "Başakşehir",
-        'address': f"{customer_address.address_line1 or ''} {customer_address.address_line2 or ''}".strip() if customer_address else "Test Adres",
-        'country': customer_address.country if customer_address else "Türkiye"
-    }
+            print(f"Şoför Adı: {sofor_adi}, Soyadı: {sofor_soyadi}, TC: {sofor_tc}, Plaka: {plaka}")  # Debug için
+            
+        except Exception as e:
+            print(f"Driver bilgisi alınırken hata: {e}")
+            # Hata durumunda varsayılan değerler zaten yukarıda tanımlandı
 
-    # Şoför adı soyadı ayır
-    sofor_adi = "SOFOR"
-    sofor_soyadi = "BILINMIYOR"
-    sofor_tc = "12345678901"
-    plaka = "34ABC123"
-
-    if doc.driver:
-        try:
-            driver_doc = frappe.get_doc("Driver", doc.driver)
-
-            if driver_doc.driver_name:
-                ad_soyad = driver_doc.driver_name.strip().split()
-                if len(ad_soyad) >= 2:
-                    sofor_adi = " ".join(ad_soyad[:-1])
-                    sofor_soyadi = ad_soyad[-1]
-                else:
-                    sofor_adi = ad_soyad[0]
-
-            if driver_doc.tc_no:
-                sofor_tc = driver_doc.custom_driver_id
-            if driver_doc.license_number:
-                plaka = driver_doc.license_number
-        except:
-            pass
-
-    # Taşıyıcı VKN supplier'dan alınır
+    # Taşıyıcı bilgileri
     tasiyici_vkn = None
     if doc.transporter:
         try:
@@ -2151,7 +2127,6 @@ def generate_delivery_note_xml(doc, settings):
         except:
             pass
 
-    # Taşıyıcı bilgileri
     tasiyici_info = {
         'tax_id': tasiyici_vkn or sender_info['tax_id'],
         'company_name': doc.transporter_name or sender_info['company_name'],
@@ -2162,7 +2137,6 @@ def generate_delivery_note_xml(doc, settings):
         'lr_no': doc.lr_no or ""
     }
 
-    # Sevk bilgileri
     sevk_info = {
         'tarih': doc.posting_date or frappe.utils.today(),
         'zaman': doc.posting_time or "12:00",
@@ -2173,7 +2147,6 @@ def generate_delivery_note_xml(doc, settings):
         'posta_kodu': customer_address.pincode if customer_address else "34200"
     }
 
-    # Satırlar
     satirlar = ""
     for i, item in enumerate(doc.items):
         satirlar += f'''
@@ -2186,7 +2159,6 @@ def generate_delivery_note_xml(doc, settings):
     <Miktar>{item.qty}</Miktar>
   </FaturaSatir>'''
 
-    # Tutarları hesapla
     net_total = getattr(doc, 'net_total', 0) or getattr(doc, 'total', 0) or 0
     grand_total = getattr(doc, 'grand_total', 0) or getattr(doc, 'rounded_total', 0) or net_total
     discount_amount = getattr(doc, 'discount_amount', 0) or 0
@@ -2231,9 +2203,9 @@ def generate_delivery_note_xml(doc, settings):
       <VknTc>VKN</VknTc>
       <VknTcNo>{tasiyici_info['tax_id']}</VknTcNo>
       <Unvan>{html.escape(tasiyici_info['company_name'])}</Unvan>
-      <Plaka>{tasiyici_info['plaka']}</Plaka>
-      <SoforAdi>{tasiyici_info['sofor_adi']}</SoforAdi>
-      <SoforSoyadi>{tasiyici_info['sofor_soyadi']}</SoforSoyadi>
+      <Plaka>{doc.vehicle_no}</Plaka>
+      <SoforAdi>{doc.driver_name.split()[0] if doc.driver_name and len(doc.driver_name.split()) > 0 else 'SOFOR'}</SoforAdi>
+      <SoforSoyadi>{doc.driver_name.split()[1] if doc.driver_name and len(doc.driver_name.split()) > 1 else 'BILINMIYOR'}</SoforSoyadi>
       <SoforTcNo>{tasiyici_info['sofor_tc']}</SoforTcNo>
     </Tasiyici>  
     <Sevk>
@@ -2348,4 +2320,106 @@ def get_sender_info(settings):
             'tax_id': None, 'company_name': None, 'phone': None, 'email': None,
             'tax_office': "Merkez Vergi Dairesi", 'country': "Türkiye", 
             'city': "İstanbul", 'district': "Merkez", 'address': ""
+        }
+	
+import requests
+from datetime import datetime
+import frappe
+
+@frappe.whitelist()
+def fetch_einvoices(docname):
+    doc = frappe.get_doc("TD EInvoice Inbox", docname)
+    settings = frappe.get_single("TD EInvoice Settings")
+
+    if not settings.integrator:
+        frappe.throw("TD EInvoice Settings içinde entegratör tanımlı değil.")
+
+    integrator = frappe.get_doc("TD EInvoice Integrator", settings.integrator)
+
+    url = integrator.efatura_url or "https://efatura.finalizer.com.tr/EbelgeService.svc"
+
+    # Patronun SoapUI'da test ettiği birebir aynı XML yapısı - Optional yorumları çıkarıldı
+    envelope = """<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:tem="http://tempuri.org/" xmlns:ns="http://schemas.datacontract.org/2004/07/">
+   <soap:Header/>
+   <soap:Body>
+      <tem:viewDocumentList>
+         <tem:listQuery>
+            <ns:DocumentCount>50</ns:DocumentCount>
+            <ns:DocumentType>EFATURA</ns:DocumentType>
+            <ns:DocumentViewType>GELEN</ns:DocumentViewType>
+            <ns:EndDate>31.12.2022</ns:EndDate>
+            <ns:ListRead>true</ns:ListRead>
+            <ns:ReceiverID></ns:ReceiverID>
+            <ns:ReplyStatus></ns:ReplyStatus>
+            <ns:SenderID></ns:SenderID>
+            <ns:StartDate>01.11.2022</ns:StartDate>
+            <ns:UserID>24</ns:UserID>
+            <ns:UserPassword>kFaQ7yww45jVr7NnTHmGaA==</ns:UserPassword>
+         </tem:listQuery>
+      </tem:viewDocumentList>
+   </soap:Body>
+</soap:Envelope>"""
+
+    try:
+        frappe.log_error("📤 Gönderilen XML", envelope)
+
+        response = requests.post(
+            url=url,
+            data=envelope.encode("utf-8"),
+            headers={
+                "Content-Type": "application/soap+xml; charset=utf-8; action=\"http://tempuri.org/IEBelge/viewDocumentList\""
+            },
+            timeout=30
+        )
+
+        log_text = f"""📩 Gelen Yanıt (Finalizer)
+🔢 HTTP Kod: {response.status_code}
+📄 İçerik Uzunluğu: {len(response.content)}
+📜 Yanıt: {response.text or '[YANIT BOŞ]'}
+"""
+        frappe.log_error("📥 Gelen E-Fatura Yanıtı", log_text)
+
+        if response.status_code == 200:
+            if '<ReturnCode>400</ReturnCode>' in response.text:
+                return {
+                    "status": "success",
+                    "message": "E-fatura listesi başarıyla alındı.",
+                    "raw_response": response.text
+                }
+            elif "soap:Fault" in response.text or "s:Fault" in response.text:
+                return {
+                    "status": "error",
+                    "message": "SOAP Fault alındı - Servis hatası",
+                    "raw_response": response.text
+                }
+            else:
+                return {
+                    "status": "info",
+                    "message": "Yanıt alındı - İçerik kontrol edilmeli",
+                    "raw_response": response.text
+                }
+        else:
+            return {
+                "status": "fail",
+                "message": f"HTTP {response.status_code} hatası",
+                "raw_response": response.text
+            }
+
+    except requests.exceptions.Timeout:
+        frappe.log_error("🕒 Timeout Hatası", "SOAP request timeout")
+        return {
+            "status": "timeout",
+            "message": "İstek zaman aşımına uğradı."
+        }
+    except requests.exceptions.ConnectionError:
+        frappe.log_error("🔌 Bağlantı Hatası", "SOAP connection error")
+        return {
+            "status": "connection_error", 
+            "message": "Servise bağlanılamadı."
+        }
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "🛑 Finalizer SOAP Hatası")
+        return {
+            "status": "error",
+            "message": f"SOAP isteği sırasında hata oluştu: {str(e)}"
         }
