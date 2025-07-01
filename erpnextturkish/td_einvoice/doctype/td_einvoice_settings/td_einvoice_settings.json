@@ -14,13 +14,13 @@
   "central_registration_system",
   "trade_registry_number",
   "tax_office",
+  "country",
+  "city",
   "column_break_qiee",
   "street",
   "building_number",
   "door_number",
   "district",
-  "city",
-  "country",
   "section_units",
   "unit_mapping",
   "item_matcher_section",
@@ -55,12 +55,16 @@
   {
    "fieldname": "alias",
    "fieldtype": "Data",
-   "label": "VKN Alias"
+   "hidden": 1,
+   "label": "VKN Alias",
+   "read_only": 1
   },
   {
    "fieldname": "branch",
    "fieldtype": "Data",
-   "label": "Branch Code"
+   "hidden": 1,
+   "label": "Branch Code",
+   "read_only": 1
   },
   {
    "fieldname": "section_units",
@@ -109,12 +113,14 @@
   {
    "fieldname": "central_registration_system",
    "fieldtype": "Data",
-   "label": "Central Registration System"
+   "label": "Tax ID"
   },
   {
    "fieldname": "trade_registry_number",
    "fieldtype": "Data",
-   "label": "Trade Registry Number"
+   "hidden": 1,
+   "label": "Trade Registry Number",
+   "read_only": 1
   },
   {
    "fieldname": "street",
@@ -209,7 +215,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-06-30 13:38:54.176415",
+ "modified": "2025-07-01 16:41:39.925572",
  "modified_by": "Administrator",
  "module": "TD EInvoice",
  "name": "TD EInvoice Settings",

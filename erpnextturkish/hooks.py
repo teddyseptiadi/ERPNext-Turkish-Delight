@@ -13,6 +13,12 @@ app_license = "MIT"
 
 # Includes in <head>
 # ------------------
+# apps/your_app/hooks.py
+jenv = {
+    "methods": [
+        "jinja_get_balance_on:erpnextturkish.td_utils.jinja_get_balance_on"
+    ]
+}
 
 # include js, css files in header of desk.html
 # app_include_css = "/assets/erpnextturkish/css/erpnextturkish.css"

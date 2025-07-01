@@ -2423,3 +2423,8 @@ def fetch_einvoices(docname):
             "status": "error",
             "message": f"SOAP isteği sırasında hata oluştu: {str(e)}"
         }
+
+@frappe.whitelist()
+def jinja_get_balance_on(party_type, party, date):
+    from erpnext.accounts.utils import get_balance_on
+    return get_balance_on(None, date, party_type, party)
