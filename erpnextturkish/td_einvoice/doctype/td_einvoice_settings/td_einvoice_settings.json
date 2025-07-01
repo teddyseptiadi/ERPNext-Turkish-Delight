@@ -9,6 +9,7 @@
   "integrator",
   "section_company_info",
   "company",
+  "company_name",
   "alias",
   "branch",
   "central_registration_system",
@@ -210,12 +211,17 @@
    "fieldname": "item_matcher",
    "fieldtype": "Table",
    "options": "TD EInvoice Settings Item"
+  },
+  {
+   "fieldname": "company_name",
+   "fieldtype": "Data",
+   "label": "Company Name"
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-07-01 16:41:39.925572",
+ "modified": "2025-07-01 16:57:32.142503",
  "modified_by": "Administrator",
  "module": "TD EInvoice",
  "name": "TD EInvoice Settings",

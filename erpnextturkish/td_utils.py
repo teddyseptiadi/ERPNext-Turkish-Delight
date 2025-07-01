@@ -1548,11 +1548,15 @@ def create_profile_check_soap(receiver_id, integrator):
 def get_sender_info(settings):
     """Gönderici bilgilerini al"""
     try:
+        # Mevcut company link'i kullanarak Company doc'u al
         company_doc = frappe.get_doc("Company", settings.company) if settings.company else None
         
+        # Yeni company_name field'ından şirket adını al, yoksa Company doc'undan al
+        company_name = settings.company_name or (company_doc.company_name if company_doc else None)
+        
         return {
-            'tax_id': settings.central_registration_system or company_doc.tax_id if company_doc else None,
-            'company_name': company_doc.company_name if company_doc else None,
+            'tax_id': settings.central_registration_system or (company_doc.tax_id if company_doc else None),
+            'company_name': company_name,  # Önce company_name field'ından, sonra Company doc'undan
             'phone': company_doc.phone_no if company_doc else None,
             'email': company_doc.email if company_doc else None,
             'tax_office': settings.tax_office or "Merkez Vergi Dairesi",
@@ -1561,13 +1565,19 @@ def get_sender_info(settings):
             'district': settings.district or "Merkez",
             'address': f"{settings.street or ''} {settings.building_number or ''} {settings.door_number or ''}".strip()
         }
-    except:
+    except Exception as e:
+        frappe.log_error(f"get_sender_info error: {str(e)}", "Sender Info Error")
         return {
-            'tax_id': None, 'company_name': None, 'phone': None, 'email': None,
-            'tax_office': "Merkez Vergi Dairesi", 'country': "Türkiye", 
-            'city': "İstanbul", 'district': "Merkez", 'address': ""
+            'tax_id': None, 
+            'company_name': settings.company_name if hasattr(settings, 'company_name') and settings.company_name else "Default Company",
+            'phone': None, 
+            'email': None,
+            'tax_office': "Merkez Vergi Dairesi", 
+            'country': "Türkiye", 
+            'city': "İstanbul", 
+            'district': "Merkez", 
+            'address': ""
         }
-
 
 
 def get_receiver_info(doc, customer_doc, customer_address, profile_type):
@@ -1641,7 +1651,7 @@ def generate_invoice_xml(doc, profile_type, settings):
     receiver_info = get_receiver_info(doc, customer_doc, customer_address, profile_type)
 
     sender_info['tax_id'] = sender_info.get('tax_id') or "2222222222"
-    sender_info['company_name'] = sender_info.get('company_name') or "Test"
+    sender_info['company_name'] = sender_info.get('company_name')
     sender_info['phone'] = sender_info.get('phone') or "0555 555 5555"
     sender_info['email'] = sender_info.get('email') or "info@test.com"
     sender_info['city'] = sender_info.get('city') or "Istanbul"
@@ -2302,11 +2312,19 @@ def check_response_success(status_code, response_text):
 def get_sender_info(settings):
     """Gönderici bilgilerini al"""
     try:
+        # Mevcut company link'i kullanarak Company doc'u al
         company_doc = frappe.get_doc("Company", settings.company) if settings.company else None
         
+        # Önce company_name field'ını kontrol et, eğer varsa onu kullan
+        if hasattr(settings, 'company_name') and settings.company_name:
+            company_name = settings.company_name
+        else:
+            # company_name field'ı boşsa Company doc'undan al
+            company_name = company_doc.company_name if company_doc else None
+        
         return {
-            'tax_id': settings.central_registration_system or company_doc.tax_id if company_doc else None,
-            'company_name': company_doc.company_name if company_doc else None,
+            'tax_id': settings.central_registration_system or (company_doc.tax_id if company_doc else None),
+            'company_name': company_name,  # Önce company_name field'ından, sonra Company doc'undan
             'phone': company_doc.phone_no if company_doc else None,
             'email': company_doc.email if company_doc else None,
             'tax_office': settings.tax_office or "Merkez Vergi Dairesi",
@@ -2315,11 +2333,18 @@ def get_sender_info(settings):
             'district': settings.district or "Merkez",
             'address': f"{settings.street or ''} {settings.building_number or ''} {settings.door_number or ''}".strip()
         }
-    except:
+    except Exception as e:
+        frappe.log_error(f"get_sender_info error: {str(e)}", "Sender Info Error")
         return {
-            'tax_id': None, 'company_name': None, 'phone': None, 'email': None,
-            'tax_office': "Merkez Vergi Dairesi", 'country': "Türkiye", 
-            'city': "İstanbul", 'district': "Merkez", 'address': ""
+            'tax_id': None, 
+            'company_name': settings.company_name if hasattr(settings, 'company_name') and settings.company_name else "Default Company",
+            'phone': None, 
+            'email': None,
+            'tax_office': "Merkez Vergi Dairesi", 
+            'country': "Türkiye", 
+            'city': "İstanbul", 
+            'district': "Merkez", 
+            'address': ""
         }
 	
 import requests
