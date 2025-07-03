@@ -1616,14 +1616,12 @@ def get_receiver_info(doc, customer_doc, customer_address, profile_type):
 
 
 
-
 def generate_invoice_xml(doc, profile_type, settings):
     import html
     import uuid
     import json
 
     uuid_str = str(uuid.uuid4()).upper()
-
     frappe.db.set_value("Sales Invoice", doc.name, "td_efatura_uuid", uuid_str)
 
     if profile_type == "EARSIVFATURA":
@@ -1672,19 +1670,63 @@ def generate_invoice_xml(doc, profile_type, settings):
     <SahisAd>Mehmet</SahisAd>
     <SahisSoyad>Yılmaz</SahisSoyad>"""
 
+    # --- Vergi haritası: item_code bazlı kesin eşleme (DÜZELTİLMİŞ) ---
     item_tax_map = {}
+
+    # Tüm itemlar için default 0 değerleri
+    for item in doc.items:
+        item_tax_map[item.item_code] = {"rate": 0.0, "amount": 0.0}
+
+    # Her bir vergi kaydını ayrı ayrı işle ve topla
     for tax in doc.taxes:
         if tax.item_wise_tax_detail:
             try:
                 parsed = json.loads(tax.item_wise_tax_detail)
-                for item_name, (rate, amount) in parsed.items():
-                    item_tax_map[item_name] = {
-                        "rate": rate,
-                        "amount": amount
-                    }
-            except:
-                continue
+                for item_code, tax_data in parsed.items():
+                    # tax_data genelde [rate, amount] listesi
+                    if isinstance(tax_data, list) and len(tax_data) >= 2:
+                        rate = float(tax_data[0] or 0)
+                        amount = float(tax_data[1] or 0)
+                    elif isinstance(tax_data, dict):
+                        rate = float(tax_data.get('rate', 0))
+                        amount = float(tax_data.get('amount', 0))
+                    else:
+                        continue
 
+                    # Eğer bu item_code için daha önce vergi varsa topla
+                    if item_code in item_tax_map:
+                        existing_rate = item_tax_map[item_code]['rate']
+                        existing_amount = item_tax_map[item_code]['amount']
+                        
+                        # Vergi oranlarını ve tutarlarını topla
+                        total_rate = existing_rate + rate
+                        total_amount = existing_amount + amount
+                        
+                        item_tax_map[item_code] = {
+                            "rate": total_rate,
+                            "amount": total_amount
+                        }
+                    else:
+                        # Yeni item_code (teorik olarak olmaması gerekir)
+                        item_tax_map[item_code] = {"rate": rate, "amount": amount}
+                        
+            except Exception as e:
+                print(f"Error parsing tax details: {e}")
+
+    # Eğer tüm itemlarda vergi 0 ise (yani item bazlı vergi yoksa)
+    # doc.taxes'den ilk vergi oranını kullan (genel vergi)
+    if all(v['rate'] == 0.0 for v in item_tax_map.values()) and doc.taxes:
+        default_tax_rate = float(doc.taxes[0].rate or 0)
+        for item in doc.items:
+            tax_amount = (item.amount * default_tax_rate) / 100
+            item_tax_map[item.item_code] = {"rate": default_tax_rate, "amount": tax_amount}
+
+    # Debug için vergi haritasını yazdır
+    print("=== VERGI HARİTASI ===")
+    for item_code, tax_info in item_tax_map.items():
+        print(f"Item: {item_code} -> Rate: {tax_info['rate']:.2f}%, Amount: {tax_info['amount']:.2f}")
+
+    # Satır XML üretme fonksiyonları
     def generate_ihracat_satir(i, item):
         istisna_kodu = item.custom_istısna_kalemleri 
         kap_marka = item.custom_kabin_markası 
@@ -1764,6 +1806,10 @@ def generate_invoice_xml(doc, profile_type, settings):
   </FaturaSatir>'''
 
     def generate_normal_satir(i, item):
+        tax_info = item_tax_map.get(item.item_code, {"rate": 0.0, "amount": 0.0})
+        rate = tax_info.get("rate", 0.0)
+        amount = tax_info.get("amount", 0.0)
+
         return f'''
   <FaturaSatir>
     <SatirNo>{i+1}</SatirNo>
@@ -1773,11 +1819,11 @@ def generate_invoice_xml(doc, profile_type, settings):
     <BirimFiyati ParaBirimi="{doc.currency}">{item.rate}</BirimFiyati>
     <Miktar>{item.qty}</Miktar>
     <Vergi>
-      <ToplamVergiTutar ParaBirimi="{doc.currency}">{item_tax_map.get(item.item_name, {}).get('amount', 0):.2f}</ToplamVergiTutar>
+      <ToplamVergiTutar ParaBirimi="{doc.currency}">{amount:.2f}</ToplamVergiTutar>
       <FaturaVergiDetay>
         <MatrahTutar ParaBirimi="{doc.currency}">{item.amount:.2f}</MatrahTutar>
-        <VergiTutar ParaBirimi="{doc.currency}">{item_tax_map.get(item.item_name, {}).get('amount', 0):.2f}</VergiTutar>
-        <VergiOran>{item_tax_map.get(item.item_name, {}).get('rate', 20.0):.2f}</VergiOran>
+        <VergiTutar ParaBirimi="{doc.currency}">{amount:.2f}</VergiTutar>
+        <VergiOran>{rate:.2f}</VergiOran>
         <Kategori>
           <VergiAdi>KDV</VergiAdi>
           <VergiKodu>0015</VergiKodu>
@@ -1788,17 +1834,17 @@ def generate_invoice_xml(doc, profile_type, settings):
     <IskontoTutari>0</IskontoTutari>
   </FaturaSatir>'''
 
-    # Satır tipi belirleme ve XML üretme
+    # Satır XML'sini senaryoya göre oluştur
     if scenario == "IHRACAT":
         satirlar = "".join([generate_ihracat_satir(i, item) for i, item in enumerate(doc.items)])
     elif invoice_type == "ISTISNA":
         satirlar = "".join([generate_istisna_satir(i, item) for i, item in enumerate(doc.items)])
-        # İstisna durumunda toplam vergi dahil tutar 0 olacak
         grand_total = net_total
     else:
         satirlar = "".join([generate_normal_satir(i, item) for i, item in enumerate(doc.items)])
 
-    # XML template
+    posting_time = str(doc.posting_time or '12:00:00').split('.')[0]
+
     xml_template = f"""<?xml version="1.0"?>
 <Fatura xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <Profil>{xml_profile}</Profil>
@@ -1806,7 +1852,7 @@ def generate_invoice_xml(doc, profile_type, settings):
   <No></No>
   <UUID>{uuid_str}</UUID>
   <Tarih>{doc.posting_date}</Tarih>
-  <Zaman>{doc.posting_time or '12:00:00'}</Zaman>
+  <Zaman>{posting_time}</Zaman>
   <Tip>{invoice_type}</Tip>
   <ParaBirimi>{doc.currency or 'TRY'}</ParaBirimi>
   <SatirSayisi>{len(doc.items)}</SatirSayisi>
@@ -1841,7 +1887,6 @@ def generate_invoice_xml(doc, profile_type, settings):
   <OdenecekTutar ParaBirimi="{doc.currency}">{grand_total:.0f}</OdenecekTutar>
   <DovizKuru>1</DovizKuru>"""
 
-    # TEMELFATURA için ArsivTanim eklenmez, sadece TICARIFATURA için eklenir
     if scenario == "TICARIFATURA" or xml_profile == "EARSIVFATURA":
         xml_template += f"""
   <ArsivTanim>
@@ -1860,7 +1905,6 @@ def generate_invoice_xml(doc, profile_type, settings):
 </Fatura>"""
 
     return xml_template
-
 def create_soap_body(zip_base64, integrator, file_name="invoice.zip", receiver_id="22222222222"):
     password = integrator.get_password('password') if hasattr(integrator, 'get_password') else integrator.password
     user_id = integrator.username
@@ -1893,68 +1937,7 @@ def create_soap_body(zip_base64, integrator, file_name="invoice.zip", receiver_i
 
 
 
-@frappe.whitelist()
-def send_custom_xml_to_finalizer(xml_string):
-    """Custom XML gönderme fonksiyonu - integrator bilgilerini kullanır"""
-    try:
-        settings = frappe.get_single("TD EInvoice Settings")
-        if not settings.integrator:
-            return {"status": "fail", "error": "Integrator not configured"}
-        
-        integrator = frappe.get_doc("TD EInvoice Integrator", settings.integrator)
-        if not integrator.td_enable:
-            return {"status": "fail", "error": "Integration is disabled"}
 
-        import io, zipfile, base64, requests
-
-        memory_zip = io.BytesIO()
-        with zipfile.ZipFile(memory_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr("invoice.xml", xml_string)
-        zip_bytes = memory_zip.getvalue()
-        zip_base64 = base64.b64encode(zip_bytes).decode("utf-8")
-
-        # Password'ü al (eğer yıldızlı ise get_password kullan)
-        password = integrator.get_password('password') if hasattr(integrator, 'get_password') else integrator.password
-
-        soap_body = f"""<?xml version="1.0" encoding="utf-8"?>
-<soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                 xmlns:xsd="http://www.w3.org/2001/XMLSchema"
-                 xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
-  <soap12:Body>
-    <sendData xmlns="http://tempuri.org/">
-      <document>
-        <UserID>{integrator.username}</UserID>
-        <UserPassword>{password}</UserPassword>
-        <ReceiverID>22222222222</ReceiverID>
-        <DocumentVariable>efaturaozel</DocumentVariable>
-        <fileName>invoice.zip</fileName>
-        <binaryData>
-          <FileByte>{zip_base64}</FileByte>
-          <FileName>invoice.zip</FileName>
-        </binaryData>
-      </document>
-    </sendData>
-  </soap12:Body>
-</soap12:Envelope>"""
-
-        headers = {
-            "Content-Type": "application/soap+xml; charset=utf-8; action=\"http://tempuri.org/IEBelge/sendData\""
-        }
-
-        url = integrator.test_efatura_url if integrator.td_test else integrator.efatura_url
-
-        response = requests.post(url, data=soap_body.encode("utf-8"), headers=headers)
-        response_text = response.text.strip()
-
-        return {
-            "status": "success" if response.status_code == 200 else "fail",
-            "http_status": response.status_code,
-            "response": response_text
-        }
-
-    except Exception as e:
-        frappe.log_error(str(e), "Custom XML Send Error")
-        return {"status": "fail", "error": str(e)}
 
 import frappe
 import zipfile
@@ -2149,7 +2132,7 @@ def generate_delivery_note_xml(doc, settings):
 
     sevk_info = {
         'tarih': doc.posting_date or frappe.utils.today(),
-        'zaman': doc.posting_time or "12:00",
+        'zaman': str(doc.posting_time or "12:00:00").split('.')[0],
         'siparis_tarihi': doc.posting_date or frappe.utils.today(),
         'siparis_no': doc.name,
         'belge_tarihi': doc.posting_date or frappe.utils.today(),
@@ -2180,7 +2163,7 @@ def generate_delivery_note_xml(doc, settings):
   <No></No>
   <UUID>{uuid_str}</UUID>
   <Tarih>{doc.posting_date}</Tarih>
-  <Zaman>{doc.posting_time or '12:00:00'}</Zaman>
+  <Zaman>{sevk_info['zaman']}</Zaman>
   <Tip>SEVK</Tip>
   <ParaBirimi>{doc.currency or 'TRY'}</ParaBirimi>
   <SatirSayisi>{len(doc.items)}</SatirSayisi>
