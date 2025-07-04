@@ -1311,18 +1311,17 @@ import json
 
 
 def get_settings_for_company(company):
-    """Şirkete göre ayar döner, yoksa hata fırlatır"""
+    """Şirkete göre ayar döner, yoksa None döner"""
     if not company:
-        frappe.throw("Company bilgisi boş, ayar alınamıyor.")
-    
+        return None
+
     settings_list = frappe.get_all("TD EInvoice Settings", filters={"company": company}, limit=1)
     if not settings_list:
-        frappe.throw(f"{company} için TD EInvoice Settings bulunamadı.")
-    
+        return None
+
     settings_name = settings_list[0].name
     settings = frappe.get_doc("TD EInvoice Settings", settings_name)
     return settings
-
 
 @frappe.whitelist()
 def check_profile(receiver_id=None, company=None):
@@ -2438,109 +2437,3 @@ def get_sender_info(settings):
             'district': "Merkez", 
             'address': ""
         }
-import requests
-from datetime import datetime
-import frappe
-
-@frappe.whitelist()
-def fetch_einvoices(docname):
-    doc = frappe.get_doc("TD EInvoice Inbox", docname)
-    settings = frappe.get_single("TD EInvoice Settings")
-
-    if not settings.integrator:
-        frappe.throw("TD EInvoice Settings içinde entegratör tanımlı değil.")
-
-    integrator = frappe.get_doc("TD EInvoice Integrator", settings.integrator)
-
-    url = integrator.efatura_url or "https://efatura.finalizer.com.tr/EbelgeService.svc"
-
-    # Patronun SoapUI'da test ettiği birebir aynı XML yapısı - Optional yorumları çıkarıldı
-    envelope = """<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:tem="http://tempuri.org/" xmlns:ns="http://schemas.datacontract.org/2004/07/">
-   <soap:Header/>
-   <soap:Body>
-      <tem:viewDocumentList>
-         <tem:listQuery>
-            <ns:DocumentCount>50</ns:DocumentCount>
-            <ns:DocumentType>EFATURA</ns:DocumentType>
-            <ns:DocumentViewType>GELEN</ns:DocumentViewType>
-            <ns:EndDate>31.12.2022</ns:EndDate>
-            <ns:ListRead>true</ns:ListRead>
-            <ns:ReceiverID></ns:ReceiverID>
-            <ns:ReplyStatus></ns:ReplyStatus>
-            <ns:SenderID></ns:SenderID>
-            <ns:StartDate>01.11.2022</ns:StartDate>
-            <ns:UserID>24</ns:UserID>
-            <ns:UserPassword>kFaQ7yww45jVr7NnTHmGaA==</ns:UserPassword>
-         </tem:listQuery>
-      </tem:viewDocumentList>
-   </soap:Body>
-</soap:Envelope>"""
-
-    try:
-        frappe.log_error("📤 Gönderilen XML", envelope)
-
-        response = requests.post(
-            url=url,
-            data=envelope.encode("utf-8"),
-            headers={
-                "Content-Type": "application/soap+xml; charset=utf-8; action=\"http://tempuri.org/IEBelge/viewDocumentList\""
-            },
-            timeout=30
-        )
-
-        log_text = f"""📩 Gelen Yanıt (Finalizer)
-🔢 HTTP Kod: {response.status_code}
-📄 İçerik Uzunluğu: {len(response.content)}
-📜 Yanıt: {response.text or '[YANIT BOŞ]'}
-"""
-        frappe.log_error("📥 Gelen E-Fatura Yanıtı", log_text)
-
-        if response.status_code == 200:
-            if '<ReturnCode>400</ReturnCode>' in response.text:
-                return {
-                    "status": "success",
-                    "message": "E-fatura listesi başarıyla alındı.",
-                    "raw_response": response.text
-                }
-            elif "soap:Fault" in response.text or "s:Fault" in response.text:
-                return {
-                    "status": "error",
-                    "message": "SOAP Fault alındı - Servis hatası",
-                    "raw_response": response.text
-                }
-            else:
-                return {
-                    "status": "info",
-                    "message": "Yanıt alındı - İçerik kontrol edilmeli",
-                    "raw_response": response.text
-                }
-        else:
-            return {
-                "status": "fail",
-                "message": f"HTTP {response.status_code} hatası",
-                "raw_response": response.text
-            }
-
-    except requests.exceptions.Timeout:
-        frappe.log_error("🕒 Timeout Hatası", "SOAP request timeout")
-        return {
-            "status": "timeout",
-            "message": "İstek zaman aşımına uğradı."
-        }
-    except requests.exceptions.ConnectionError:
-        frappe.log_error("🔌 Bağlantı Hatası", "SOAP connection error")
-        return {
-            "status": "connection_error", 
-            "message": "Servise bağlanılamadı."
-        }
-    except Exception as e:
-        frappe.log_error(frappe.get_traceback(), "🛑 Finalizer SOAP Hatası")
-        return {
-            "status": "error",
-            "message": f"SOAP isteği sırasında hata oluştu: {str(e)}"
-        }
-
-@frappe.whitelist()
-def jinja_get_balance_on(party_type, party, date):
-    from erpnext.accounts.utils import get_balance_on
-    return get_balance_on(None, date, party_type, party)
