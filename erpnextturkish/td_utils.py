@@ -1310,14 +1310,32 @@ import uuid
 import json
 
 
+def get_settings_for_company(company):
+    """Şirkete göre ayar döner, yoksa hata fırlatır"""
+    if not company:
+        frappe.throw("Company bilgisi boş, ayar alınamıyor.")
+    
+    settings_list = frappe.get_all("TD EInvoice Settings", filters={"company": company}, limit=1)
+    if not settings_list:
+        frappe.throw(f"{company} için TD EInvoice Settings bulunamadı.")
+    
+    settings_name = settings_list[0].name
+    settings = frappe.get_doc("TD EInvoice Settings", settings_name)
+    return settings
+
+
 @frappe.whitelist()
-def check_profile(receiver_id=None):
+def check_profile(receiver_id=None, company=None):
     """Profile sorgulama fonksiyonu"""
     if not receiver_id:
         return {"status": "fail", "error": "Receiver ID is required"}
 
     try:
-        settings = frappe.get_single("TD EInvoice Settings")
+        if company:
+            settings = get_settings_for_company(company)
+        else:
+            settings = frappe.get_single("TD EInvoice Settings")
+
         if not settings.integrator:
             return {"status": "fail", "error": "Integrator not configured"}
         
@@ -1357,7 +1375,9 @@ def send_invoice_to_finalizer(invoice_name=None):
         return {"status": "fail", "error": "Invoice name is required"}
 
     try:
-        settings = frappe.get_single("TD EInvoice Settings")
+        company = frappe.get_value("Sales Invoice", invoice_name, "company")
+        settings = get_settings_for_company(company)
+        
         if not settings.integrator:
             return {"status": "fail", "error": "Integrator not configured"}
         
@@ -1367,7 +1387,6 @@ def send_invoice_to_finalizer(invoice_name=None):
 
         doc_si = frappe.get_doc("Sales Invoice", invoice_name)
 
-        # ✅ Doğru kontrol: integrator.td_enable
         customer = frappe.get_doc("Customer", doc_si.customer)
         if integrator.td_enable:
             missing_fields = []
@@ -1390,7 +1409,7 @@ def send_invoice_to_finalizer(invoice_name=None):
         if not receiver_id:
             return {"status": "fail", "error": "Tax ID (receiver_id) is required"}
 
-        profile_result = check_profile(receiver_id)
+        profile_result = check_profile(receiver_id, company)
         if profile_result.get("status") != "success":
             return {"status": "fail", "error": f"Profile check failed: {profile_result.get('error')}"}
 
@@ -1438,6 +1457,9 @@ HTTP {resp.status_code}
     except Exception as e:
         frappe.log_error(str(e), f"Finalizer Send Error - {invoice_name}")
         return {"status": "fail", "error": str(e)}
+
+# --- geri kalan fonksiyonlar aynı, değiştirilmedi ---
+
 @frappe.whitelist()
 def update_invoice_status(invoice_name=None):
     """Fatura durumu güncelleme"""
@@ -1673,17 +1695,16 @@ def generate_invoice_xml(doc, profile_type, settings):
     # --- Vergi haritası: item_code bazlı kesin eşleme (DÜZELTİLMİŞ) ---
     item_tax_map = {}
 
-    # Tüm itemlar için default 0 değerleri
+    
     for item in doc.items:
         item_tax_map[item.item_code] = {"rate": 0.0, "amount": 0.0}
 
-    # Her bir vergi kaydını ayrı ayrı işle ve topla
+
     for tax in doc.taxes:
         if tax.item_wise_tax_detail:
             try:
                 parsed = json.loads(tax.item_wise_tax_detail)
                 for item_code, tax_data in parsed.items():
-                    # tax_data genelde [rate, amount] listesi
                     if isinstance(tax_data, list) and len(tax_data) >= 2:
                         rate = float(tax_data[0] or 0)
                         amount = float(tax_data[1] or 0)
@@ -1693,12 +1714,12 @@ def generate_invoice_xml(doc, profile_type, settings):
                     else:
                         continue
 
-                    # Eğer bu item_code için daha önce vergi varsa topla
+            
                     if item_code in item_tax_map:
                         existing_rate = item_tax_map[item_code]['rate']
                         existing_amount = item_tax_map[item_code]['amount']
                         
-                        # Vergi oranlarını ve tutarlarını topla
+        
                         total_rate = existing_rate + rate
                         total_amount = existing_amount + amount
                         
@@ -1707,22 +1728,17 @@ def generate_invoice_xml(doc, profile_type, settings):
                             "amount": total_amount
                         }
                     else:
-                        # Yeni item_code (teorik olarak olmaması gerekir)
                         item_tax_map[item_code] = {"rate": rate, "amount": amount}
                         
             except Exception as e:
                 print(f"Error parsing tax details: {e}")
 
-    # Eğer tüm itemlarda vergi 0 ise (yani item bazlı vergi yoksa)
-    # doc.taxes'den ilk vergi oranını kullan (genel vergi)
     if all(v['rate'] == 0.0 for v in item_tax_map.values()) and doc.taxes:
         default_tax_rate = float(doc.taxes[0].rate or 0)
         for item in doc.items:
             tax_amount = (item.amount * default_tax_rate) / 100
             item_tax_map[item.item_code] = {"rate": default_tax_rate, "amount": tax_amount}
 
-    # Debug için vergi haritasını yazdır
-    print("=== VERGI HARİTASI ===")
     for item_code, tax_info in item_tax_map.items():
         print(f"Item: {item_code} -> Rate: {tax_info['rate']:.2f}%, Amount: {tax_info['amount']:.2f}")
 
@@ -1938,7 +1954,6 @@ def create_soap_body(zip_base64, integrator, file_name="invoice.zip", receiver_i
 
 
 
-
 import frappe
 import zipfile
 import io
@@ -1956,16 +1971,27 @@ def send_delivery_note_to_finalizer(delivery_note_name=None):
         return {"status": "fail", "error": "Delivery Note name is required"}
 
     try:
-        settings = frappe.get_single("TD EInvoice Settings")
-        if not settings.integrator:
-            return {"status": "fail", "error": "Integrator not configured"}
+        # Delivery Note'u al
+        doc_dn = frappe.get_doc("Delivery Note", delivery_note_name)
         
-        integrator = frappe.get_doc("TD EInvoice Integrator", settings.integrator)
+        # Delivery Note'taki company'ye göre TD EWayBill Settings'i bul
+        ewaybill_settings = frappe.get_value("TD EWayBill Settings", 
+                                           {"company": doc_dn.company}, 
+                                           "*")
+        
+        if not ewaybill_settings:
+            return {"status": "fail", "error": f"TD EWayBill Settings not found for company: {doc_dn.company}"}
+            
+        # Dict'e çevir
+        ewaybill_settings = frappe.get_doc("TD EWayBill Settings", ewaybill_settings.name)
+        
+        if not ewaybill_settings.integrator:
+            return {"status": "fail", "error": "Integrator not configured in TD EWayBill Settings"}
+        
+        integrator = frappe.get_doc("TD EInvoice Integrator", ewaybill_settings.integrator)
         if not integrator.td_enable:
             return {"status": "fail", "error": "Integration is disabled"}
 
-        doc_dn = frappe.get_doc("Delivery Note", delivery_note_name)
-        
         # Müşteri bilgilerini kontrol et
         customer = frappe.get_doc("Customer", doc_dn.customer)
         if integrator.td_enable:
@@ -1988,8 +2014,8 @@ def send_delivery_note_to_finalizer(delivery_note_name=None):
         if not receiver_id:
             return {"status": "fail", "error": "Tax ID (receiver_id) is required"}
 
-        # E-İrsaliye XML oluştur
-        xml_content = generate_delivery_note_xml(doc_dn, settings)
+        # E-İrsaliye XML oluştur (ewaybill_settings'i geçir)
+        xml_content = generate_delivery_note_xml(doc_dn, ewaybill_settings)
 
         # ZIP dosyası oluştur
         mem = io.BytesIO()
@@ -2034,8 +2060,7 @@ HTTP {resp.status_code}
         return {"status": "fail", "error": str(e)}
 
 
-
-def generate_delivery_note_xml(doc, settings):
+def generate_delivery_note_xml(doc, ewaybill_settings):
     """E-İrsaliye XML oluştur"""
     import uuid
 
@@ -2051,7 +2076,8 @@ def generate_delivery_note_xml(doc, settings):
         except:
             pass
 
-    sender_info = get_sender_info(settings)
+    # TD EWayBill Settings'den sender bilgilerini al
+    sender_info = get_sender_info_from_ewaybill_settings(ewaybill_settings)
 
     receiver_info = {
         'tax_id': customer_doc.tax_id,
@@ -2226,6 +2252,44 @@ def generate_delivery_note_xml(doc, settings):
     return xml_template
 
 
+def get_sender_info_from_ewaybill_settings(ewaybill_settings):
+    """TD EWayBill Settings'den gönderici bilgilerini al"""
+    try:
+        # Company doc'u al
+        company_doc = frappe.get_doc("Company", ewaybill_settings.company) if ewaybill_settings.company else None
+        
+        # Önce ewaybill_settings'den company_name field'ını kontrol et, eğer varsa onu kullan
+        if hasattr(ewaybill_settings, 'company_name') and ewaybill_settings.company_name:
+            company_name = ewaybill_settings.company_name
+        else:
+            # company_name field'ı boşsa Company doc'undan al
+            company_name = company_doc.company_name if company_doc else None
+        
+        return {
+            'tax_id': ewaybill_settings.central_registration_system or (company_doc.tax_id if company_doc else None),
+            'company_name': company_name,  # Önce company_name field'ından, sonra Company doc'undan
+            'phone': company_doc.phone_no if company_doc else None,
+            'email': company_doc.email if company_doc else None,
+            'tax_office': ewaybill_settings.tax_office or "Merkez Vergi Dairesi",
+            'country': ewaybill_settings.country or "Türkiye",
+            'city': ewaybill_settings.city or "İstanbul",
+            'district': ewaybill_settings.district or "Merkez",
+            'address': f"{ewaybill_settings.street or ''} {ewaybill_settings.building_number or ''} {ewaybill_settings.door_number or ''}".strip()
+        }
+    except Exception as e:
+        frappe.log_error(f"get_sender_info_from_ewaybill_settings error: {str(e)}", "EWayBill Sender Info Error")
+        return {
+            'tax_id': None, 
+            'company_name': ewaybill_settings.company_name if hasattr(ewaybill_settings, 'company_name') and ewaybill_settings.company_name else "Default Company",
+            'phone': None, 
+            'email': None,
+            'tax_office': "Merkez Vergi Dairesi", 
+            'country': "Türkiye", 
+            'city': "İstanbul", 
+            'district': "Merkez", 
+            'address': ""
+        }
+
 
 def create_eirsaliye_soap_body(zip_base64, integrator, file_name="delivery.zip", receiver_id="3881416132"):
     """E-İrsaliye SOAP body oluştur"""
@@ -2292,8 +2356,9 @@ def check_response_success(status_code, response_text):
     return True
 
 
+# Eski get_sender_info fonksiyonu - geriye dönük uyumluluk için korundu
 def get_sender_info(settings):
-    """Gönderici bilgilerini al"""
+    """Gönderici bilgilerini al - TD EInvoice Settings için"""
     try:
         # Mevcut company link'i kullanarak Company doc'u al
         company_doc = frappe.get_doc("Company", settings.company) if settings.company else None
@@ -2329,7 +2394,6 @@ def get_sender_info(settings):
             'district': "Merkez", 
             'address': ""
         }
-	
 import requests
 from datetime import datetime
 import frappe

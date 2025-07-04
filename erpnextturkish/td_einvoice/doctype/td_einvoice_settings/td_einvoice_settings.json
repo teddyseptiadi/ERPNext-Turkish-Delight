@@ -1,6 +1,7 @@
 {
  "actions": [],
  "allow_rename": 1,
+ "autoname": "prompt",
  "creation": "2025-06-11 13:53:04.115271",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -219,12 +220,12 @@
   }
  ],
  "index_web_pages_for_search": 1,
- "issingle": 1,
  "links": [],
- "modified": "2025-07-01 16:57:32.142503",
+ "modified": "2025-07-03 17:11:07.790744",
  "modified_by": "Administrator",
  "module": "TD EInvoice",
  "name": "TD EInvoice Settings",
+ "naming_rule": "Set by user",
  "owner": "Administrator",
  "permissions": [
   {
