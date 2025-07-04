@@ -1638,6 +1638,20 @@ def get_receiver_info(doc, customer_doc, customer_address, profile_type):
 
 
 
+def get_mapped_unit(settings, original_unit):
+    """
+    Unit mapping tablosundan orijinal birime karşılık gelen einvoice_unit'i bulur
+    """
+    if not settings or not hasattr(settings, 'unit_mapping'):
+        return original_unit
+    
+    for mapping in settings.unit_mapping:
+        if hasattr(mapping, 'unit_name') and mapping.unit_name == original_unit:
+            return mapping.einvoice_unit
+
+    return original_unit
+
+
 def generate_invoice_xml(doc, profile_type, settings):
     import html
     import uuid
@@ -1754,13 +1768,16 @@ def generate_invoice_xml(doc, profile_type, settings):
         teslim_sarti = doc.incoterm 
         gonderim_sekli = (doc.custom_gönderim_sekli).split(" ")[0]
         gtip = item.custom_gtip or f"12345678901{i}"
+        
+        # Unit mapping eklentisi
+        mapped_unit = get_mapped_unit(settings, item.uom)
 
         return f'''
   <FaturaSatir>
     <SatirNo>{i+1}</SatirNo>
     <UrunAdi>{html.escape(item.item_name)}</UrunAdi>
     <UrunKodu>{html.escape(item.item_code)}</UrunKodu>
-    <OlcuBirimi>{item.uom}</OlcuBirimi>
+    <OlcuBirimi>{mapped_unit}</OlcuBirimi>
     <BirimFiyati ParaBirimi="{doc.currency}">{item.rate}</BirimFiyati>
     <Miktar>{item.qty}</Miktar>
     <Vergi>
@@ -1794,12 +1811,16 @@ def generate_invoice_xml(doc, profile_type, settings):
 
     def generate_istisna_satir(i, item):
         istisna_kodu = item.custom_istısna_kalemleri or "301"
+        
+        # Unit mapping eklentisi
+        mapped_unit = get_mapped_unit(settings, item.uom)
+        
         return f'''
   <FaturaSatir>
     <SatirNo>{i+1}</SatirNo>
     <UrunAdi>{html.escape(item.item_name)}</UrunAdi>
     <UrunKodu>{html.escape(item.item_code)}</UrunKodu>
-    <OlcuBirimi>{item.uom}</OlcuBirimi>
+    <OlcuBirimi>{mapped_unit}</OlcuBirimi>
     <BirimFiyati ParaBirimi="{doc.currency}">{item.rate}</BirimFiyati>
     <Miktar>{item.qty}</Miktar>
     <Vergi>
@@ -1825,13 +1846,16 @@ def generate_invoice_xml(doc, profile_type, settings):
         tax_info = item_tax_map.get(item.item_code, {"rate": 0.0, "amount": 0.0})
         rate = tax_info.get("rate", 0.0)
         amount = tax_info.get("amount", 0.0)
+        
+        # Unit mapping eklentisi
+        mapped_unit = get_mapped_unit(settings, item.uom)
 
         return f'''
   <FaturaSatir>
     <SatirNo>{i+1}</SatirNo>
     <UrunAdi>{html.escape(item.item_name)}</UrunAdi>
     <UrunKodu>{html.escape(item.item_code)}</UrunKodu>
-    <OlcuBirimi>{item.uom}</OlcuBirimi>
+    <OlcuBirimi>{mapped_unit}</OlcuBirimi>
     <BirimFiyati ParaBirimi="{doc.currency}">{item.rate}</BirimFiyati>
     <Miktar>{item.qty}</Miktar>
     <Vergi>
@@ -2059,7 +2083,24 @@ HTTP {resp.status_code}
         frappe.log_error(str(e), f"E-İrsaliye Send Error - {delivery_note_name}")
         return {"status": "fail", "error": str(e)}
 
-
+def get_einvoice_unit(item_uom, ewaybill_settings):
+    """
+    Delivery Note'daki UOM'u e-fatura için uygun birime çevirir
+    ewaybill_settings'deki unit_mapping tablosundan karşılığını bulur
+    """
+    try:
+        # unit_mapping tablosunda unit_name'e karşılık gelen einvoice_unit'i bul
+        if hasattr(ewaybill_settings, 'unit_mapping') and ewaybill_settings.unit_mapping:
+            for mapping in ewaybill_settings.unit_mapping:
+                if mapping.unit_name == item_uom:
+                    return mapping.einvoice_unit
+        
+        # Eğer mapping bulunamazsa orijinal UOM'u döndür
+        return item_uom
+        
+    except Exception as e:
+        frappe.log_error(f"get_einvoice_unit error: {str(e)}", "Unit Mapping Error")
+        return item_uom
 def generate_delivery_note_xml(doc, ewaybill_settings):
     """E-İrsaliye XML oluştur"""
     import uuid
@@ -2168,12 +2209,15 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
 
     satirlar = ""
     for i, item in enumerate(doc.items):
+        # UOM mapping'i uygula
+        einvoice_unit = get_einvoice_unit(item.uom, ewaybill_settings)
+        
         satirlar += f'''
   <FaturaSatir>
     <SatirNo>{i+1}</SatirNo>
     <UrunAdi>{html.escape(item.item_name)}</UrunAdi>
     <UrunKodu>{html.escape(item.item_code)}</UrunKodu>
-    <OlcuBirimi>{item.uom}</OlcuBirimi>
+    <OlcuBirimi>{einvoice_unit}</OlcuBirimi>
     <BirimFiyati ParaBirimi="{doc.currency or 'TRY'}">{item.rate}</BirimFiyati>
     <Miktar>{item.qty}</Miktar>
   </FaturaSatir>'''
