@@ -1432,15 +1432,17 @@ def send_invoice_to_finalizer(invoice_name=None):
         }
         resp = requests.post(url, data=soap_body.encode("utf-8"), headers=headers, timeout=60)
 
-        frappe.log_error(
-            f"""🧾 Profile: {profile_type}
+        # 🔽 Log sadece detailed_log seçiliyse atılsın
+        if integrator.detailed_log:
+            frappe.log_error(
+                f"""🧾 Profile: {profile_type}
 📄 Sent XML:\n{xml_content}
 
 📤 Finalizer Response:
 HTTP {resp.status_code}
 {resp.text}""",
-            f"Finalizer SOAP Result - {invoice_name}"
-        )
+                f"Finalizer SOAP Result - {invoice_name}"
+            )
 
         add_comment_to_invoice(invoice_name, resp.text, resp.status_code)
 
@@ -1457,7 +1459,6 @@ HTTP {resp.status_code}
         frappe.log_error(str(e), f"Finalizer Send Error - {invoice_name}")
         return {"status": "fail", "error": str(e)}
 
-# --- geri kalan fonksiyonlar aynı, değiştirilmedi ---
 
 @frappe.whitelist()
 def update_invoice_status(invoice_name=None):
@@ -1566,6 +1567,7 @@ def create_profile_check_soap(receiver_id, integrator):
 </soap12:Envelope>"""
 
 
+
 def get_sender_info(settings):
     """Gönderici bilgilerini al"""
     try:
@@ -1575,11 +1577,19 @@ def get_sender_info(settings):
         # Yeni company_name field'ından şirket adını al, yoksa Company doc'undan al
         company_name = settings.company_name or (company_doc.company_name if company_doc else None)
         
+        # Settings'ten phone, fax, website, email alanlarını al - yoksa Company doc'undan al
+        phone = settings.phone or (company_doc.phone_no if company_doc else None)
+        fax = settings.fax or (company_doc.fax if company_doc else None)
+        website = settings.website or (company_doc.website if company_doc else None)
+        email = settings.email or (company_doc.email if company_doc else None)
+        
         return {
             'tax_id': settings.central_registration_system or (company_doc.tax_id if company_doc else None),
             'company_name': company_name,  # Önce company_name field'ından, sonra Company doc'undan
-            'phone': company_doc.phone_no if company_doc else None,
-            'email': company_doc.email if company_doc else None,
+            'phone': phone,
+            'fax': fax,
+            'website': website,
+            'email': email,
             'tax_office': settings.tax_office or "Merkez Vergi Dairesi",
             'country': settings.country or "Türkiye",
             'city': settings.city or "İstanbul",
@@ -1591,7 +1601,9 @@ def get_sender_info(settings):
         return {
             'tax_id': None, 
             'company_name': settings.company_name if hasattr(settings, 'company_name') and settings.company_name else "Default Company",
-            'phone': None, 
+            'phone': None,
+            'fax': None,
+            'website': None,
             'email': None,
             'tax_office': "Merkez Vergi Dairesi", 
             'country': "Türkiye", 
@@ -1985,8 +1997,6 @@ import requests
 import uuid
 import json
 import html
-
-
 @frappe.whitelist()
 def send_delivery_note_to_finalizer(delivery_note_name=None):
     """E-İrsaliye gönderme fonksiyonu"""
@@ -2020,18 +2030,15 @@ def send_delivery_note_to_finalizer(delivery_note_name=None):
         if integrator.td_enable:
             missing_fields = []
             if not customer.tax_id:
-                missing_fields.append("Tax ID (tax_id)")
+                missing_fields.append("Tax ID")
             if not customer.custom_tax_office:
-                missing_fields.append("Tax Office (custom_tax_office)")
+                missing_fields.append("Tax Office")
             if not doc_dn.customer_address:
-                missing_fields.append("Customer Address (customer_address)")
+                missing_fields.append("Customer Address")
 
             if missing_fields:
-                frappe.throw(
-                    "E-İrsaliye integration is enabled. The following fields are missing:<br><ul><li>" +
-                    "</li><li>".join(missing_fields) +
-                    "</li></ul>"
-                )
+                fields_str = ", ".join(missing_fields)
+                frappe.throw(f"E-İrsaliye entegrasyonu aktif. Aşağıdaki zorunlu alanlar eksik: {fields_str}.")
 
         receiver_id = customer.tax_id or doc_dn.customer_name
         if not receiver_id:
@@ -2056,16 +2063,17 @@ def send_delivery_note_to_finalizer(delivery_note_name=None):
         
         resp = requests.post(url, data=soap_body.encode("utf-8"), headers=headers, timeout=60)
 
-        # Log kaydet
-        frappe.log_error(
-            f"""📦 E-İrsaliye Gönderildi
+        # 🔽 Sadece detailed_log aktifse log kaydet
+        if integrator.detailed_log:
+            frappe.log_error(
+                f"""📦 E-İrsaliye Gönderildi
 📄 Sent XML:\n{xml_content}
 
 📤 Finalizer Response:
 HTTP {resp.status_code}
 {resp.text}""",
-            f"E-İrsaliye Result - {delivery_note_name}"
-        )
+                f"E-İrsaliye Result - {delivery_note_name}"
+            )
 
         # Yorum ekle
         add_comment_to_delivery_note(delivery_note_name, resp.text, resp.status_code)
@@ -2081,7 +2089,6 @@ HTTP {resp.status_code}
     except Exception as e:
         frappe.log_error(str(e), f"E-İrsaliye Send Error - {delivery_note_name}")
         return {"status": "fail", "error": str(e)}
-
 def get_einvoice_unit(item_uom, ewaybill_settings):
     """
     Delivery Note'daki UOM'u e-fatura için uygun birime çevirir
@@ -2100,6 +2107,7 @@ def get_einvoice_unit(item_uom, ewaybill_settings):
     except Exception as e:
         frappe.log_error(f"get_einvoice_unit error: {str(e)}", "Unit Mapping Error")
         return item_uom
+
 def generate_delivery_note_xml(doc, ewaybill_settings):
     """E-İrsaliye XML oluştur"""
     import uuid
@@ -2240,8 +2248,8 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
     <VknTc>VKN</VknTc>
     <VknTcNo>{sender_info['tax_id']}</VknTcNo>
     <Unvan>{html.escape(sender_info['company_name'])}</Unvan>
-    <Tel>5355765766</Tel>
-    <Eposta>testmail@test.com</Eposta>
+    <Tel>{sender_info['phone']}</Tel>
+    <Eposta>{sender_info['email']}</Eposta>
     <VergiDairesi>{sender_info['tax_office']}</VergiDairesi>
     <Ulke>Türkiye</Ulke>
     <Sehir>{sender_info['city']}</Sehir>
@@ -2300,32 +2308,33 @@ def get_sender_info_from_ewaybill_settings(ewaybill_settings):
     try:
         # Company doc'u al
         company_doc = frappe.get_doc("Company", ewaybill_settings.company) if ewaybill_settings.company else None
-        
-        # Önce ewaybill_settings'den company_name field'ını kontrol et, eğer varsa onu kullan
-        if hasattr(ewaybill_settings, 'company_name') and ewaybill_settings.company_name:
-            company_name = ewaybill_settings.company_name
-        else:
-            # company_name field'ı boşsa Company doc'undan al
-            company_name = company_doc.company_name if company_doc else None
-        
+
+        # company_name öncelikli olarak settings içinden alınır, yoksa Company doc'tan
+        company_name = getattr(ewaybill_settings, "company_name", None) or (company_doc.company_name if company_doc else None)
+
         return {
             'tax_id': ewaybill_settings.central_registration_system or (company_doc.tax_id if company_doc else None),
-            'company_name': company_name,  # Önce company_name field'ından, sonra Company doc'undan
-            'phone': company_doc.phone_no if company_doc else None,
-            'email': company_doc.email if company_doc else None,
+            'company_name': company_name,
+            'phone': getattr(ewaybill_settings, "phone", None) or "5355765766",
+            'email': getattr(ewaybill_settings, "email", None) or "testmail@test.com",
+            'fax': getattr(ewaybill_settings, "fax", None) or "",
+            'website': getattr(ewaybill_settings, "website", None) or "",
             'tax_office': ewaybill_settings.tax_office or "Merkez Vergi Dairesi",
             'country': ewaybill_settings.country or "Türkiye",
             'city': ewaybill_settings.city or "İstanbul",
             'district': ewaybill_settings.district or "Merkez",
-            'address': f"{ewaybill_settings.street or ''} {ewaybill_settings.building_number or ''} {ewaybill_settings.door_number or ''}".strip()
+            'address': ewaybill_settings.address or ""
         }
+
     except Exception as e:
         frappe.log_error(f"get_sender_info_from_ewaybill_settings error: {str(e)}", "EWayBill Sender Info Error")
         return {
             'tax_id': None, 
-            'company_name': ewaybill_settings.company_name if hasattr(ewaybill_settings, 'company_name') and ewaybill_settings.company_name else "Default Company",
-            'phone': None, 
-            'email': None,
+            'company_name': getattr(ewaybill_settings, "company_name", None) or "Default Company",
+            'phone': "5355765766",
+            'email': "testmail@test.com",
+            'fax': "",
+            'website': "",
             'tax_office': "Merkez Vergi Dairesi", 
             'country': "Türkiye", 
             'city': "İstanbul", 
@@ -2405,32 +2414,32 @@ def get_sender_info(settings):
     try:
         # Mevcut company link'i kullanarak Company doc'u al
         company_doc = frappe.get_doc("Company", settings.company) if settings.company else None
-        
-        # Önce company_name field'ını kontrol et, eğer varsa onu kullan
-        if hasattr(settings, 'company_name') and settings.company_name:
-            company_name = settings.company_name
-        else:
-            # company_name field'ı boşsa Company doc'undan al
-            company_name = company_doc.company_name if company_doc else None
-        
+
+        # company_name öncelikli olarak settings içinden alınır, yoksa Company doc'tan
+        company_name = getattr(settings, "company_name", None) or (company_doc.company_name if company_doc else None)
+
         return {
             'tax_id': settings.central_registration_system or (company_doc.tax_id if company_doc else None),
-            'company_name': company_name,  # Önce company_name field'ından, sonra Company doc'undan
-            'phone': company_doc.phone_no if company_doc else None,
-            'email': company_doc.email if company_doc else None,
+            'company_name': company_name,
+            'phone': getattr(settings, "phone", None) or "5355765766",
+            'email': getattr(settings, "email", None) or "testmail@test.com",
+            'fax': getattr(settings, "fax", None) or "",
+            'website': getattr(settings, "website", None) or "",
             'tax_office': settings.tax_office or "Merkez Vergi Dairesi",
             'country': settings.country or "Türkiye",
             'city': settings.city or "İstanbul",
             'district': settings.district or "Merkez",
-            'address': f"{settings.street or ''} {settings.building_number or ''} {settings.door_number or ''}".strip()
+            'address': settings.address or ""
         }
     except Exception as e:
         frappe.log_error(f"get_sender_info error: {str(e)}", "Sender Info Error")
         return {
             'tax_id': None, 
             'company_name': settings.company_name if hasattr(settings, 'company_name') and settings.company_name else "Default Company",
-            'phone': None, 
-            'email': None,
+            'phone': "5355765766",
+            'email': "testmail@test.com",
+            'fax': "",
+            'website': "",
             'tax_office': "Merkez Vergi Dairesi", 
             'country': "Türkiye", 
             'city': "İstanbul", 

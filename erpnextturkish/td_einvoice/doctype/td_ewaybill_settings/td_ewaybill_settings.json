@@ -20,12 +20,14 @@
   "central_registration_system",
   "trade_registry_number",
   "column_break_nxvh",
-  "street",
-  "building_number",
-  "door_number",
   "district",
   "city",
   "country",
+  "address",
+  "phone",
+  "fax",
+  "email",
+  "website",
   "unit_mapping_section",
   "unit_mapping",
   "item_matcher_section",
@@ -87,21 +89,6 @@
    "hidden": 1,
    "label": "Trade Registry Number",
    "read_only": 1
-  },
-  {
-   "fieldname": "street",
-   "fieldtype": "Data",
-   "label": "Street"
-  },
-  {
-   "fieldname": "building_number",
-   "fieldtype": "Data",
-   "label": "Building Number"
-  },
-  {
-   "fieldname": "door_number",
-   "fieldtype": "Data",
-   "label": "Door Number"
   },
   {
    "fieldname": "district",
@@ -174,11 +161,36 @@
   {
    "fieldname": "column_break_nxvh",
    "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "phone",
+   "fieldtype": "Data",
+   "label": "Phone"
+  },
+  {
+   "fieldname": "fax",
+   "fieldtype": "Data",
+   "label": "Fax"
+  },
+  {
+   "fieldname": "email",
+   "fieldtype": "Data",
+   "label": "Email"
+  },
+  {
+   "fieldname": "website",
+   "fieldtype": "Data",
+   "label": "Website"
+  },
+  {
+   "fieldname": "address",
+   "fieldtype": "Text",
+   "label": "Address"
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-07-03 17:27:32.665381",
+ "modified": "2025-07-04 18:04:27.302763",
  "modified_by": "Administrator",
  "module": "TD EInvoice",
  "name": "TD EWayBill Settings",

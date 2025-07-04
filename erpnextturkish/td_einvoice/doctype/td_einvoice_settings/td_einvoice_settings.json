@@ -19,10 +19,12 @@
   "country",
   "city",
   "column_break_qiee",
-  "street",
-  "building_number",
-  "door_number",
   "district",
+  "phone",
+  "fax",
+  "email",
+  "website",
+  "address",
   "section_units",
   "unit_mapping",
   "item_matcher_section",
@@ -125,23 +127,8 @@
    "read_only": 1
   },
   {
-   "fieldname": "street",
-   "fieldtype": "Data",
-   "label": "Street"
-  },
-  {
    "fieldname": "column_break_qiee",
    "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "building_number",
-   "fieldtype": "Data",
-   "label": "Building Number"
-  },
-  {
-   "fieldname": "door_number",
-   "fieldtype": "Data",
-   "label": "Door Number"
   },
   {
    "fieldname": "district",
@@ -217,11 +204,36 @@
    "fieldname": "company_name",
    "fieldtype": "Data",
    "label": "Company Name"
+  },
+  {
+   "fieldname": "phone",
+   "fieldtype": "Data",
+   "label": "Phone"
+  },
+  {
+   "fieldname": "fax",
+   "fieldtype": "Data",
+   "label": "Fax"
+  },
+  {
+   "fieldname": "email",
+   "fieldtype": "Data",
+   "label": "Email"
+  },
+  {
+   "fieldname": "website",
+   "fieldtype": "Data",
+   "label": "Website"
+  },
+  {
+   "fieldname": "address",
+   "fieldtype": "Text",
+   "label": "Address"
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-07-03 17:11:07.790744",
+ "modified": "2025-07-04 17:58:16.292820",
  "modified_by": "Administrator",
  "module": "TD EInvoice",
  "name": "TD EInvoice Settings",
