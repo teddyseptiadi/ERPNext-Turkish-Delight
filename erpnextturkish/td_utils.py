@@ -1809,7 +1809,6 @@ def generate_notes_block(doc, settings):
         # <Siparis> bloğu yalnızca bir kez yazılmalı
         notes_xml += f"""
   <Siparis>
-    <SiparisNo>{belge_no}</SiparisNo>
     <SiparisTarihi>{siparis_tarih}</SiparisTarihi>
     <BelgeNo>{belge_no}</BelgeNo>
     <BelgeTarihi>{belge_tarih}</BelgeTarihi>
