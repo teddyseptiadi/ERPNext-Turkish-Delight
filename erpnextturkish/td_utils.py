@@ -304,10 +304,6 @@ def get_service_xml_for_uyumsoft(strType):
 						<AccountingCustomerParty xmlns="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2">
 							<Party>
 								<PartyIdentification>
-									<ID schemeID="{{docCustomer.id_scheme}}" xmlns="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">{{docCustomer.tax_id}}</ID>
-								</PartyIdentification>
-
-								<PartyName>
 									<Name xmlns="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">{{docCustomer.customer_name}}</Name>
 								</PartyName>
 
@@ -1661,8 +1657,120 @@ def get_mapped_unit(settings, original_unit):
             return mapping.einvoice_unit
 
     return original_unit
+def render_jinja_template(template_str, doc):
+    """Jinja template'ini render et"""
+    if not template_str:
+        return ""
+    
+    try:
+        import re
+        import html
+        from bs4 import BeautifulSoup
 
+        pattern = r'\{\{\s*doc(?:SI)?\.([\w_]+)\s*\}\}'
 
+        def clean_html(value):
+            """HTML içeriğini temizle ve düz metin olarak döndür"""
+            try:
+                if not value:
+                    return ""
+                
+                # Eğer HTML içeriyorsa BeautifulSoup ile temizle
+                if isinstance(value, str) and ('<' in value and '>' in value):
+                    soup = BeautifulSoup(value, "html.parser")
+                    
+                    # Her <p> etiketini yeni satır ile değiştir
+                    for p in soup.find_all('p'):
+                        p.insert_after('\n')
+                    
+                    # <br> etiketlerini yeni satır ile değiştir
+                    for br in soup.find_all('br'):
+                        br.replace_with('\n')
+                    
+                    # Tüm metni al
+                    text = soup.get_text()
+                    
+                    # Satır sonlarını düzenle
+                    lines = []
+                    for line in text.split('\n'):
+                        line = line.strip()
+                        if line:  # Boş satırları atla
+                            lines.append(line)
+                    
+                    return '\n'.join(lines)
+                else:
+                    return str(value)
+            except Exception as e:
+                # Hata durumunda orijinal değeri döndür
+                return str(value) if value else ""
+
+        def replace_var(match):
+            field_name = match.group(1)
+            try:
+                value = getattr(doc, field_name, '')
+                if value:
+                    # HTML temizleme işlemini her zaman uygula
+                    cleaned_value = clean_html(value)
+                    return cleaned_value
+                return ''
+            except Exception as e:
+                return ''
+        
+        result = re.sub(pattern, replace_var, template_str)
+        return result
+
+    except Exception as e:
+        frappe.log_error(f"Jinja template error: {str(e)}", "Jinja Template Error")
+        return template_str
+
+def generate_notes_block(doc, settings):
+    """Not bloğunu oluştur (satır satır Aciklama olarak yaz)"""
+    try:
+        notes_xml = ""
+
+        siparis_no = getattr(doc, "td_siparis_no", "") or "125"
+        siparis_tarih = getattr(doc, "td_siparis_tarihi", "") or str(doc.posting_date)
+        belge_no = getattr(doc, "td_belge_no", "") or doc.name
+        belge_tarih = getattr(doc, "td_belge_tarihi", "") or str(doc.posting_date)
+
+        # <Siparis> bloğu yalnızca bir kez yazılmalı
+        notes_xml += f"""
+  <Siparis>
+    <SiparisNo>{belge_no}</SiparisNo>
+    <SiparisTarihi>{siparis_tarih}</SiparisTarihi>
+    <BelgeNo>{belge_no}</BelgeNo>
+    <BelgeTarihi>{belge_tarih}</BelgeTarihi>
+  </Siparis>"""
+
+        aciklama_satirlar = []
+
+        # 4 adet not formül alanını kontrol et (td_not1_formul - td_not4_formul)
+        for i in range(1, 5):
+            field_name = f"td_not{i}_formul"
+            formula = getattr(settings, field_name, None)
+
+            if formula:
+                rendered_value = render_jinja_template(formula, doc)
+                if rendered_value:
+                    # Satır satır böl ve boş olmayanları listeye ekle
+                    lines = rendered_value.split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        if line:  # Boş satırları atla
+                            aciklama_satirlar.append(line)
+
+        # Eğer açıklama varsa <AciklamaSatir> bloğunu oluştur
+        if aciklama_satirlar:
+            notes_xml += "\n  <AciklamaSatir>"
+            for line in aciklama_satirlar:
+                notes_xml += f"\n    <Aciklama>{line}</Aciklama>"
+            notes_xml += "\n  </AciklamaSatir>"
+
+        return notes_xml
+
+    except Exception as e:
+        frappe.log_error(f"Notes block error: {str(e)}", "Notes Block Error")
+        return ""
 def generate_invoice_xml(doc, profile_type, settings):
     import html
     import uuid
@@ -1895,6 +2003,9 @@ def generate_invoice_xml(doc, profile_type, settings):
         satirlar = "".join([generate_normal_satir(i, item) for i, item in enumerate(doc.items)])
 
     posting_time = str(doc.posting_time or '12:00:00').split('.')[0]
+    
+    # Not bloğunu oluştur
+    notes_block = generate_notes_block(doc, settings)
 
     xml_template = f"""<?xml version="1.0"?>
 <Fatura xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
@@ -1930,7 +2041,7 @@ def generate_invoice_xml(doc, profile_type, settings):
     <Sehir>{receiver_info['city']}</Sehir>
     <Ilce>{receiver_info['district']}</Ilce>
     <AdresMahCad>{receiver_info['address']}</AdresMahCad>{receiver_info['individual_fields']}
-  </FaturaAlici>
+  </FaturaAlici>{notes_block}
 {satirlar}
   <ToplamVergiHaricTutar ParaBirimi="{doc.currency}">{net_total:.0f}</ToplamVergiHaricTutar>
   <ToplamVergiDahilTutar ParaBirimi="{doc.currency}">{grand_total:.0f}</ToplamVergiDahilTutar>
@@ -2425,10 +2536,10 @@ def get_sender_info(settings):
             'email': getattr(settings, "email", None) or "testmail@test.com",
             'fax': getattr(settings, "fax", None) or "",
             'website': getattr(settings, "website", None) or "",
-            'tax_office': settings.tax_office or "Merkez Vergi Dairesi",
-            'country': settings.country or "Türkiye",
-            'city': settings.city or "İstanbul",
-            'district': settings.district or "Merkez",
+            'tax_office': settings.tax_office,
+            'country': settings.country,
+            'city': settings.city,
+            'district': settings.district,
             'address': settings.address or ""
         }
     except Exception as e:
