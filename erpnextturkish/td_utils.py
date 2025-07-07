@@ -1400,7 +1400,8 @@ def send_invoice_to_finalizer(invoice_name=None):
                     "</li></ul>"
                 )
 
-        receiver_id = doc_si.tax_id or doc_si.customer_name
+        # VKN/TC numarasını doğru şekilde al - önce customer'dan, sonra doc'tan
+        receiver_id = customer.tax_id or doc_si.tax_id or doc_si.customer_name
         if not receiver_id:
             return {"status": "fail", "error": "Tax ID (receiver_id) is required"}
 
@@ -1428,11 +1429,26 @@ def send_invoice_to_finalizer(invoice_name=None):
         }
         resp = requests.post(url, data=soap_body.encode("utf-8"), headers=headers, timeout=60)
 
-        # 🔽 Log sadece detailed_log seçiliyse atılsın
+        # 🔽 Log sadece detailed_log seçiliyse atılsın + ZIP içeriğini de kontrol et
         if integrator.detailed_log:
+            # ZIP içeriğini kontrol et
+            mem_check = io.BytesIO()
+            with zipfile.ZipFile(mem_check, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr(f"{doc_si.name}.xml", xml_content)
+            
+            # ZIP içeriğini oku ve kontrol et
+            mem_check.seek(0)
+            with zipfile.ZipFile(mem_check, "r") as zf:
+                zip_content = zf.read(f"{doc_si.name}.xml").decode('utf-8')
+            
             frappe.log_error(
                 f"""🧾 Profile: {profile_type}
-📄 Sent XML:\n{xml_content}
+🏷️  Receiver ID used: {receiver_id}
+📁 ZIP içeriği:
+{zip_content}
+
+📄 Sent XML:
+{xml_content}
 
 📤 Finalizer Response:
 HTTP {resp.status_code}
@@ -1454,6 +1470,52 @@ HTTP {resp.status_code}
     except Exception as e:
         frappe.log_error(str(e), f"Finalizer Send Error - {invoice_name}")
         return {"status": "fail", "error": str(e)}
+
+
+def get_receiver_info(doc, customer_doc, customer_address, profile_type):
+    """Alıcı bilgilerini al"""
+    try:
+        # Tax ID'yi önce customer'dan, sonra doc'tan al
+        tax_id = customer_doc.tax_id or doc.tax_id or ""
+        
+        full_name = customer_doc.customer_name or doc.customer_name or ""
+        parts = full_name.strip().split(None, 1)
+        first_name = parts[0] if len(parts) > 0 else ""
+        last_name = parts[1] if len(parts) > 1 else ""
+
+        individual_fields = ""
+        if profile_type == "EARSIVFATURA" and first_name:
+            individual_fields = f"""
+    <SahisAd>{first_name}</SahisAd>
+    <SahisSoyad>{last_name}</SahisSoyad>"""
+
+        return {
+            'id_type': "VKN" if len(tax_id) == 10 else "TC",
+            'id_number': tax_id,  # Düzeltildi: doğru tax_id kullanılıyor
+            'phone': customer_doc.mobile_no or "",
+            'email': customer_doc.email_id or "",
+            'tax_office': customer_doc.custom_tax_office or "",  # Profil tipine bakılmaksızın vergi dairesi al
+            'country': customer_address.country if customer_address else "Türkiye",
+            'city': customer_address.city if customer_address else "",
+            'district': customer_address.county if customer_address else "",
+            'address': f"{customer_address.address_line1 or ''} {customer_address.address_line2 or ''}".strip() if customer_address else "",
+            'individual_fields': individual_fields,
+            'company_name': customer_doc.customer_name or doc.customer_name  # Eklendi: company_name
+        }
+    except:
+        return {
+            'id_type': "TC", 
+            'id_number': "", 
+            'phone': "", 
+            'email': "",
+            'tax_office': "", 
+            'country': "Türkiye", 
+            'city': "", 
+            'district': "",
+            'address': "", 
+            'individual_fields': "",
+            'company_name': ""  # Eklendi: company_name
+        }
 
 
 @frappe.whitelist()
@@ -1612,6 +1674,9 @@ def get_sender_info(settings):
 def get_receiver_info(doc, customer_doc, customer_address, profile_type):
     """Alıcı bilgilerini al"""
     try:
+        # Tax ID'yi önce customer'dan, sonra doc'tan al
+        tax_id = customer_doc.tax_id or doc.tax_id or ""
+        
         full_name = customer_doc.customer_name or doc.customer_name or ""
         parts = full_name.strip().split(None, 1)
         first_name = parts[0] if len(parts) > 0 else ""
@@ -1624,8 +1689,8 @@ def get_receiver_info(doc, customer_doc, customer_address, profile_type):
     <SahisSoyad>{last_name}</SahisSoyad>"""
 
         return {
-            'id_type': "VKN" if len(doc.tax_id or "") == 10 else "TC",
-            'id_number': doc.tax_id or "",
+            'id_type': "VKN" if len(tax_id) == 10 else "TC",
+            'id_number': tax_id,  # Düzeltildi: doğru tax_id kullanılıyor
             'phone': customer_doc.mobile_no or "",
             'email': customer_doc.email_id or "",
             'tax_office': customer_doc.custom_tax_office or "",  # Profil tipine bakılmaksızın vergi dairesi al
@@ -1633,15 +1698,23 @@ def get_receiver_info(doc, customer_doc, customer_address, profile_type):
             'city': customer_address.city if customer_address else "",
             'district': customer_address.county if customer_address else "",
             'address': f"{customer_address.address_line1 or ''} {customer_address.address_line2 or ''}".strip() if customer_address else "",
-            'individual_fields': individual_fields
+            'individual_fields': individual_fields,
+            'company_name': customer_doc.customer_name or doc.customer_name  # Eklendi: company_name
         }
     except:
         return {
-            'id_type': "TC", 'id_number': "", 'phone': "", 'email': "",
-            'tax_office': "", 'country': "Türkiye", 'city': "", 'district': "",
-            'address': "", 'individual_fields': ""
+            'id_type': "TC", 
+            'id_number': "", 
+            'phone': "", 
+            'email': "",
+            'tax_office': "", 
+            'country': "Türkiye", 
+            'city': "", 
+            'district': "",
+            'address': "", 
+            'individual_fields': "",
+            'company_name': ""  # Eklendi: company_name
         }
-
 
 
 
@@ -1818,7 +1891,7 @@ def generate_invoice_xml(doc, profile_type, settings):
     receiver_info['district'] = receiver_info.get('district') or "Merkez"
     receiver_info['address'] = receiver_info.get('address') or "t t"
     receiver_info['country'] = "Türkiye"
-    receiver_info['individual_fields'] = ""
+    receiver_info['individual_fields'] = receiver_info.get('individual_fields', "")
 
     if profile_type == "EFATURA" and scenario == "IHRACAT":
         receiver_info['individual_fields'] = """
@@ -2032,8 +2105,8 @@ def generate_invoice_xml(doc, profile_type, settings):
   </FaturaSahibi>
   <FaturaAlici>
     <VknTc>{receiver_info.get('id_type', 'VKN')}</VknTc>
-    <VknTcNo>{receiver_info.get('id_number', '3881416132')}</VknTcNo>
-    <Unvan>{html.escape(receiver_info.get('company_name', customer_doc.customer_name))}</Unvan>
+    <VknTcNo>{receiver_info.get('id_number', '')}</VknTcNo>
+    <Unvan>{html.escape(receiver_info.get('company_name', ''))}</Unvan>
     <Tel>{receiver_info['phone']}</Tel>
     <Eposta>{receiver_info['email']}</Eposta>
     <VergiDairesi>{receiver_info.get('tax_office', '')}</VergiDairesi>
