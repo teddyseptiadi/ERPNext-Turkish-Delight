@@ -1583,38 +1583,31 @@ def create_profile_check_soap(receiver_id, integrator):
 
 
 def get_sender_info(settings):
-    """Gönderici bilgilerini al"""
+    """Gönderici bilgilerini al (her zaman string döner, None asla dönmez)"""
     try:
-        # Mevcut company link'i kullanarak Company doc'u al
-        company_doc = frappe.get_doc("Company", settings.company) if settings.company else None
-        
-        # Yeni company_name field'ından şirket adını al, yoksa Company doc'undan al
-        company_name = settings.company_name or (company_doc.company_name if company_doc else "")
-        
-        # Settings'ten phone, fax, website, email alanlarını al - yoksa Company doc'undan al
-        phone = settings.phone or (company_doc.phone_no if company_doc else "")
-        fax = settings.fax or (company_doc.fax if company_doc else "")
-        website = settings.website or (company_doc.website if company_doc else "")
-        email = settings.email or (company_doc.email if company_doc else "")
-        
+        company_doc = frappe.get_doc("Company", settings.company) if getattr(settings, "company", None) else None
+
+        def safe_get(obj, field):
+            return str(getattr(obj, field, "") or "").strip() if obj else ""
+
         return {
-            'tax_id': settings.central_registration_system or (company_doc.tax_id if company_doc else ""),
-            'company_name': company_name,
-            'phone': phone,
-            'fax': fax,
-            'website': website,
-            'email': email,
-            'tax_office': settings.tax_office or "",
-            'country': settings.country or "",
-            'city': settings.city or "",
-            'district': settings.district or "",
-            'address': f"{settings.street or ''} {settings.building_number or ''} {settings.door_number or ''}".strip()
+            'tax_id': safe_get(settings, "central_registration_system") or safe_get(company_doc, "tax_id"),
+            'company_name': safe_get(settings, "company_name") or safe_get(company_doc, "company_name"),
+            'phone': safe_get(settings, "phone") or safe_get(company_doc, "phone_no"),
+            'fax': safe_get(settings, "fax") or safe_get(company_doc, "fax"),
+            'website': safe_get(settings, "website") or safe_get(company_doc, "website"),
+            'email': safe_get(settings, "email") or safe_get(company_doc, "email"),
+            'tax_office': safe_get(settings, "tax_office"),
+            'country': safe_get(settings, "country"),
+            'city': safe_get(settings, "city"),
+            'district': safe_get(settings, "district"),
+            'address': f"{safe_get(settings, 'street')} {safe_get(settings, 'building_number')} {safe_get(settings, 'door_number')}".strip()
         }
     except Exception as e:
         frappe.log_error(f"get_sender_info error: {str(e)}", "Sender Info Error")
         return {
             'tax_id': "",
-            'company_name': settings.company_name if hasattr(settings, 'company_name') and settings.company_name else "",
+            'company_name': "",
             'phone': "",
             'fax': "",
             'website': "",
@@ -1632,16 +1625,20 @@ def get_receiver_info(doc, customer_doc, customer_address, profile_type):
         # Tax ID'yi önce customer'dan, sonra doc'tan al
         tax_id = customer_doc.tax_id or doc.tax_id or ""
         
+        # İsim ve soyisim ayrıştırma
         full_name = customer_doc.customer_name or doc.customer_name or ""
-        parts = full_name.strip().split(None, 1)
-        first_name = parts[0] if len(parts) > 0 else ""
-        last_name = parts[1] if len(parts) > 1 else ""
+        first_name, last_name = "", ""
+        if full_name:
+            parts = full_name.strip().split(None, 1)
+            first_name = parts[0]
+            last_name = parts[1] if len(parts) > 1 else ""
 
+        # Eğer e-arşivse ve isim varsa, bireysel alanları hazırla
         individual_fields = ""
         if profile_type == "EARSIVFATURA" and first_name:
-            individual_fields = f"""
-    <SahisAd>{first_name}</SahisAd>
-    <SahisSoyad>{last_name}</SahisSoyad>"""
+            individual_fields = f"\n    <SahisAd>{first_name}</SahisAd>"
+            if last_name:
+                individual_fields += f"\n    <SahisSoyad>{last_name}</SahisSoyad>"
 
         return {
             'id_type': "VKN" if len(tax_id) == 10 else "TC",
@@ -1649,21 +1646,21 @@ def get_receiver_info(doc, customer_doc, customer_address, profile_type):
             'phone': customer_doc.mobile_no or "",
             'email': customer_doc.email_id or "",
             'tax_office': customer_doc.custom_tax_office or "",
-            'country': customer_address.country if customer_address else "",
+            'country': customer_address.country if customer_address else "Türkiye",
             'city': customer_address.city if customer_address else "",
             'district': customer_address.county if customer_address else "",
             'address': f"{customer_address.address_line1 or ''} {customer_address.address_line2 or ''}".strip() if customer_address else "",
             'individual_fields': individual_fields,
-            'company_name': customer_doc.customer_name or doc.customer_name or ""
+            'company_name': full_name
         }
     except:
         return {
-            'id_type': "",
+            'id_type': "TC",
             'id_number': "",
             'phone': "",
             'email': "",
             'tax_office': "",
-            'country': "",
+            'country': "Türkiye",
             'city': "",
             'district': "",
             'address': "",
@@ -1756,7 +1753,6 @@ def generate_notes_block(doc, settings):
     try:
         notes_xml = ""
 
-        siparis_no = getattr(doc, "td_siparis_no", "") or "125"
         siparis_tarih = getattr(doc, "td_siparis_tarihi", "") or str(doc.posting_date)
         belge_no = getattr(doc, "td_belge_no", "") or doc.name
         belge_tarih = getattr(doc, "td_belge_tarihi", "") or str(doc.posting_date)
@@ -1846,11 +1842,6 @@ def generate_invoice_xml(doc, profile_type, settings):
     receiver_info['address'] = receiver_info.get('address')
     receiver_info['country'] = "Türkiye"
     receiver_info['individual_fields'] = receiver_info.get('individual_fields', "")
-
-    if profile_type == "EFATURA" and scenario == "IHRACAT":
-        receiver_info['individual_fields'] = """
-    <SahisAd>Mehmet</SahisAd>
-    <SahisSoyad>Yılmaz</SahisSoyad>"""
 
     # --- Vergi haritası: item_code bazlı kesin eşleme (DÜZELTİLMİŞ) ---
     item_tax_map = {}
