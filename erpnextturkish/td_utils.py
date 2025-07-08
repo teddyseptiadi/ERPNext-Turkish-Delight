@@ -1473,32 +1473,6 @@ HTTP {resp.status_code}
 
 
 
-def get_receiver_info(doc, customer_doc, customer_address, profile_type):
-    """Alıcı bilgilerini al (hiçbir kontrol veya fallback olmadan)"""
-    full_name = customer_doc.customer_name
-    parts = full_name.strip().split(None, 1) if full_name else []
-    first_name = parts[0] if len(parts) > 0 else ""
-    last_name = parts[1] if len(parts) > 1 else ""
-
-    individual_fields = ""
-    if profile_type == "EARSIVFATURA" and first_name:
-        individual_fields = f"""
-    <SahisAd>{first_name}</SahisAd>
-    <SahisSoyad>{last_name}</SahisSoyad>"""
-
-    return {
-        'id_type': "VKN" if customer_doc.tax_id and len(customer_doc.tax_id) == 10 else "TC",
-        'id_number': customer_doc.tax_id,
-        'phone': customer_doc.mobile_no,
-        'email': customer_doc.email_id,
-        'tax_office': customer_doc.custom_tax_office,
-        'country': customer_address.country,
-        'city': customer_address.city,
-        'district': customer_address.county,
-        'address': f"{customer_address.address_line1} {customer_address.address_line2}".strip() if customer_address else None,
-        'individual_fields': individual_fields,
-        'company_name': customer_doc.customer_name
-    }
 
 @frappe.whitelist()
 def update_invoice_status(invoice_name=None):
@@ -1615,43 +1589,42 @@ def get_sender_info(settings):
         company_doc = frappe.get_doc("Company", settings.company) if settings.company else None
         
         # Yeni company_name field'ından şirket adını al, yoksa Company doc'undan al
-        company_name = settings.company_name or (company_doc.company_name if company_doc else None)
+        company_name = settings.company_name or (company_doc.company_name if company_doc else "")
         
         # Settings'ten phone, fax, website, email alanlarını al - yoksa Company doc'undan al
-        phone = settings.phone or (company_doc.phone_no if company_doc else None)
-        fax = settings.fax or (company_doc.fax if company_doc else None)
-        website = settings.website or (company_doc.website if company_doc else None)
-        email = settings.email or (company_doc.email if company_doc else None)
+        phone = settings.phone or (company_doc.phone_no if company_doc else "")
+        fax = settings.fax or (company_doc.fax if company_doc else "")
+        website = settings.website or (company_doc.website if company_doc else "")
+        email = settings.email or (company_doc.email if company_doc else "")
         
         return {
-            'tax_id': settings.central_registration_system or (company_doc.tax_id if company_doc else None),
-            'company_name': company_name,  # Önce company_name field'ından, sonra Company doc'undan
+            'tax_id': settings.central_registration_system or (company_doc.tax_id if company_doc else ""),
+            'company_name': company_name,
             'phone': phone,
             'fax': fax,
             'website': website,
             'email': email,
-            'tax_office': settings.tax_office or "Merkez Vergi Dairesi",
-            'country': settings.country or "Türkiye",
-            'city': settings.city or "İstanbul",
-            'district': settings.district or "Merkez",
+            'tax_office': settings.tax_office or "",
+            'country': settings.country or "",
+            'city': settings.city or "",
+            'district': settings.district or "",
             'address': f"{settings.street or ''} {settings.building_number or ''} {settings.door_number or ''}".strip()
         }
     except Exception as e:
         frappe.log_error(f"get_sender_info error: {str(e)}", "Sender Info Error")
         return {
-            'tax_id': None, 
-            'company_name': settings.company_name if hasattr(settings, 'company_name') and settings.company_name else "Default Company",
-            'phone': None,
-            'fax': None,
-            'website': None,
-            'email': None,
-            'tax_office': "Merkez Vergi Dairesi", 
-            'country': "Türkiye", 
-            'city': "İstanbul", 
-            'district': "Merkez", 
+            'tax_id': "",
+            'company_name': settings.company_name if hasattr(settings, 'company_name') and settings.company_name else "",
+            'phone': "",
+            'fax': "",
+            'website': "",
+            'email': "",
+            'tax_office': "",
+            'country': "",
+            'city': "",
+            'district': "",
             'address': ""
         }
-
 
 def get_receiver_info(doc, customer_doc, customer_address, profile_type):
     """Alıcı bilgilerini al"""
@@ -1672,30 +1645,30 @@ def get_receiver_info(doc, customer_doc, customer_address, profile_type):
 
         return {
             'id_type': "VKN" if len(tax_id) == 10 else "TC",
-            'id_number': tax_id,  # Düzeltildi: doğru tax_id kullanılıyor
+            'id_number': tax_id,
             'phone': customer_doc.mobile_no or "",
             'email': customer_doc.email_id or "",
-            'tax_office': customer_doc.custom_tax_office or "",  # Profil tipine bakılmaksızın vergi dairesi al
-            'country': customer_address.country if customer_address else "Türkiye",
+            'tax_office': customer_doc.custom_tax_office or "",
+            'country': customer_address.country if customer_address else "",
             'city': customer_address.city if customer_address else "",
             'district': customer_address.county if customer_address else "",
             'address': f"{customer_address.address_line1 or ''} {customer_address.address_line2 or ''}".strip() if customer_address else "",
             'individual_fields': individual_fields,
-            'company_name': customer_doc.customer_name or doc.customer_name  # Eklendi: company_name
+            'company_name': customer_doc.customer_name or doc.customer_name or ""
         }
     except:
         return {
-            'id_type': "TC", 
-            'id_number': "", 
-            'phone': "", 
+            'id_type': "",
+            'id_number': "",
+            'phone': "",
             'email': "",
-            'tax_office': "", 
-            'country': "Türkiye", 
-            'city': "", 
+            'tax_office': "",
+            'country': "",
+            'city': "",
             'district': "",
-            'address': "", 
+            'address': "",
             'individual_fields': "",
-            'company_name': ""  # Eklendi: company_name
+            'company_name': ""
         }
 
 
@@ -2573,41 +2546,3 @@ def check_response_success(status_code, response_text):
     return True
 
 
-# Eski get_sender_info fonksiyonu - geriye dönük uyumluluk için korundu
-def get_sender_info(settings):
-    """Gönderici bilgilerini al - TD EInvoice Settings için"""
-    try:
-        # Mevcut company link'i kullanarak Company doc'u al
-        company_doc = frappe.get_doc("Company", settings.company) if settings.company else None
-
-        # company_name öncelikli olarak settings içinden alınır, yoksa Company doc'tan
-        company_name = getattr(settings, "company_name", None) or (company_doc.company_name if company_doc else None)
-
-        return {
-            'tax_id': settings.central_registration_system or (company_doc.tax_id if company_doc else None),
-            'company_name': company_name,
-            'phone': getattr(settings, "phone", None),
-            'email': getattr(settings, "email", None),
-            'fax': getattr(settings, "fax", None) or "",
-            'website': getattr(settings, "website", None) or "",
-            'tax_office': settings.tax_office,
-            'country': settings.country,
-            'city': settings.city,
-            'district': settings.district,
-            'address': settings.address or ""
-        }
-    except Exception as e:
-        frappe.log_error(f"get_sender_info error: {str(e)}", "Sender Info Error")
-        return {
-            'tax_id': None, 
-            'company_name': settings.company_name if hasattr(settings, 'company_name') and settings.company_name else "Default Company",
-            'phone': "5355765766",
-            'email': "testmail@test.com",
-            'fax': "",
-            'website': "",
-            'tax_office': "Merkez Vergi Dairesi", 
-            'country': "Türkiye", 
-            'city': "İstanbul", 
-            'district': "Merkez", 
-            'address': ""
-        }
