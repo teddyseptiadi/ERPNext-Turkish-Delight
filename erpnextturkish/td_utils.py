@@ -1875,20 +1875,20 @@ def generate_invoice_xml(doc, profile_type, settings):
     sender_info = get_sender_info(settings)
     receiver_info = get_receiver_info(doc, customer_doc, customer_address, profile_type)
 
-    sender_info['tax_id'] = sender_info.get('tax_id') or "2222222222"
+    sender_info['tax_id'] = sender_info.get('tax_id')
     sender_info['company_name'] = sender_info.get('company_name')
-    sender_info['phone'] = sender_info.get('phone') or "0555 555 5555"
-    sender_info['email'] = sender_info.get('email') or "info@test.com"
-    sender_info['city'] = sender_info.get('city') or "Istanbul"
-    sender_info['district'] = sender_info.get('district') or "Ataköy"
-    sender_info['address'] = sender_info.get('address') or "testcaddesi 5 4"
+    sender_info['phone'] = sender_info.get('phone')
+    sender_info['email'] = sender_info.get('email') 
+    sender_info['city'] = sender_info.get('city') 
+    sender_info['district'] = sender_info.get('district') 
+    sender_info['address'] = sender_info.get('address') 
     sender_info['country'] = "Türkiye"
 
-    receiver_info['phone'] = receiver_info.get('phone') or "+90505 555 5555"
-    receiver_info['email'] = receiver_info.get('email') or "musteri@example.com"
-    receiver_info['city'] = receiver_info.get('city') or "t"
-    receiver_info['district'] = receiver_info.get('district') or "Merkez"
-    receiver_info['address'] = receiver_info.get('address') or "t t"
+    receiver_info['phone'] = receiver_info.get('phone')
+    receiver_info['email'] = receiver_info.get('email')
+    receiver_info['city'] = receiver_info.get('city')
+    receiver_info['district'] = receiver_info.get('district')
+    receiver_info['address'] = receiver_info.get('address')
     receiver_info['country'] = "Türkiye"
     receiver_info['individual_fields'] = receiver_info.get('individual_fields', "")
 
