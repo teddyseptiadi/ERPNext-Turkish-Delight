@@ -1601,7 +1601,7 @@ def get_sender_info(settings):
             'country': safe_get(settings, "country"),
             'city': safe_get(settings, "city"),
             'district': safe_get(settings, "district"),
-            'address': f"{safe_get(settings, 'street')} {safe_get(settings, 'building_number')} {safe_get(settings, 'door_number')}".strip()
+            'address': safe_get(settings, "address")
         }
     except Exception as e:
         frappe.log_error(f"get_sender_info error: {str(e)}", "Sender Info Error")
