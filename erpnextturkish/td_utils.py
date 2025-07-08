@@ -2121,7 +2121,7 @@ def generate_invoice_xml(doc, profile_type, settings):
   <OdenecekTutar ParaBirimi="{doc.currency}">{grand_total:.0f}</OdenecekTutar>
   <DovizKuru>1</DovizKuru>"""
 
-    if scenario == "TICARIFATURA" or xml_profile == "EARSIVFATURA":
+    if xml_profile == "EARSIVFATURA":
         xml_template += f"""
   <ArsivTanim>
     <GonderimTarihi>{doc.posting_date}</GonderimTarihi>
