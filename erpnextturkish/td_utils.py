@@ -1472,51 +1472,33 @@ HTTP {resp.status_code}
         return {"status": "fail", "error": str(e)}
 
 
-def get_receiver_info(doc, customer_doc, customer_address, profile_type):
-    """Alıcı bilgilerini al"""
-    try:
-        # Tax ID'yi önce customer'dan, sonra doc'tan al
-        tax_id = customer_doc.tax_id or doc.tax_id or ""
-        
-        full_name = customer_doc.customer_name or doc.customer_name or ""
-        parts = full_name.strip().split(None, 1)
-        first_name = parts[0] if len(parts) > 0 else ""
-        last_name = parts[1] if len(parts) > 1 else ""
 
-        individual_fields = ""
-        if profile_type == "EARSIVFATURA" and first_name:
-            individual_fields = f"""
+def get_receiver_info(doc, customer_doc, customer_address, profile_type):
+    """Alıcı bilgilerini al (hiçbir kontrol veya fallback olmadan)"""
+    full_name = customer_doc.customer_name
+    parts = full_name.strip().split(None, 1) if full_name else []
+    first_name = parts[0] if len(parts) > 0 else ""
+    last_name = parts[1] if len(parts) > 1 else ""
+
+    individual_fields = ""
+    if profile_type == "EARSIVFATURA" and first_name:
+        individual_fields = f"""
     <SahisAd>{first_name}</SahisAd>
     <SahisSoyad>{last_name}</SahisSoyad>"""
 
-        return {
-            'id_type': "VKN" if len(tax_id) == 10 else "TC",
-            'id_number': tax_id,  # Düzeltildi: doğru tax_id kullanılıyor
-            'phone': customer_doc.mobile_no or "",
-            'email': customer_doc.email_id or "",
-            'tax_office': customer_doc.custom_tax_office or "",  # Profil tipine bakılmaksızın vergi dairesi al
-            'country': customer_address.country if customer_address else "Türkiye",
-            'city': customer_address.city if customer_address else "",
-            'district': customer_address.county if customer_address else "",
-            'address': f"{customer_address.address_line1 or ''} {customer_address.address_line2 or ''}".strip() if customer_address else "",
-            'individual_fields': individual_fields,
-            'company_name': customer_doc.customer_name or doc.customer_name  # Eklendi: company_name
-        }
-    except:
-        return {
-            'id_type': "TC", 
-            'id_number': "", 
-            'phone': "", 
-            'email': "",
-            'tax_office': "", 
-            'country': "Türkiye", 
-            'city': "", 
-            'district': "",
-            'address': "", 
-            'individual_fields': "",
-            'company_name': ""  # Eklendi: company_name
-        }
-
+    return {
+        'id_type': "VKN" if customer_doc.tax_id and len(customer_doc.tax_id) == 10 else "TC",
+        'id_number': customer_doc.tax_id,
+        'phone': customer_doc.mobile_no,
+        'email': customer_doc.email_id,
+        'tax_office': customer_doc.custom_tax_office,
+        'country': customer_address.country,
+        'city': customer_address.city,
+        'district': customer_address.county,
+        'address': f"{customer_address.address_line1} {customer_address.address_line2}".strip() if customer_address else None,
+        'individual_fields': individual_fields,
+        'company_name': customer_doc.customer_name
+    }
 
 @frappe.whitelist()
 def update_invoice_status(invoice_name=None):
@@ -2111,7 +2093,7 @@ def generate_invoice_xml(doc, profile_type, settings):
     <VergiDairesi>{receiver_info.get('tax_office', '')}</VergiDairesi>
     <Ulke>{receiver_info['country']}</Ulke>
     <Sehir>{receiver_info['city']}</Sehir>
-    <Ilce>{receiver_info['district']}</Ilce>
+    <Ilce>{receiver_info.get('district') or ''}</Ilce>
     <AdresMahCad>{receiver_info['address']}</AdresMahCad>{receiver_info['individual_fields']}
   </FaturaAlici>{notes_block}
 {satirlar}
@@ -2604,8 +2586,8 @@ def get_sender_info(settings):
         return {
             'tax_id': settings.central_registration_system or (company_doc.tax_id if company_doc else None),
             'company_name': company_name,
-            'phone': getattr(settings, "phone", None) or "5355765766",
-            'email': getattr(settings, "email", None) or "testmail@test.com",
+            'phone': getattr(settings, "phone", None),
+            'email': getattr(settings, "email", None),
             'fax': getattr(settings, "fax", None) or "",
             'website': getattr(settings, "website", None) or "",
             'tax_office': settings.tax_office,
