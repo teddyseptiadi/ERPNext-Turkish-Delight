@@ -40,8 +40,10 @@ frappe.ui.form.on('Sales Invoice', {
                     frappe.db.get_value('TD EInvoice Integrator', settings.integrator, 'td_enable')
                         .then(result => {
                             if (result?.message?.td_enable) {
-                                frm.add_custom_button(__('E-Invoice'), null, __('Actions'));
+                                // ❌ Bu satırı kaldırdık:
+                                // frm.add_custom_button(__('E-Invoice'), null, __('Actions'));
 
+                                // ✅ Sadece işlevsel butonları ekle:
                                 frm.add_custom_button(__('Send'), () => {
                                     frappe.call({
                                         method: 'erpnextturkish.td_utils.send_invoice_to_finalizer',
