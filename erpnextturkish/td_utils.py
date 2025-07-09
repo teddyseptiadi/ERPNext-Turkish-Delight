@@ -1400,7 +1400,7 @@ def send_invoice_to_finalizer(invoice_name=None):
                     "</li></ul>"
                 )
 
-        # VKN/TC numarasını doğru şekilde al - önce customer'dan, sonra doc'tan
+        # VKN/TC numarasını al
         receiver_id = customer.tax_id or doc_si.tax_id or doc_si.customer_name
         if not receiver_id:
             return {"status": "fail", "error": "Tax ID (receiver_id) is required"}
@@ -1414,13 +1414,26 @@ def send_invoice_to_finalizer(invoice_name=None):
         frappe.db.set_value("Sales Invoice", invoice_name, "custom_profile_type", profile_type)
         frappe.db.commit()
 
+        # 🧾 Alıcı bilgilerini getir
+        customer_address = frappe.get_doc("Address", doc_si.customer_address) if doc_si.customer_address else None
+        receiver_info = get_receiver_info(doc_si, customer, customer_address, profile_type)
+
+        # 📋 Alıcı bilgileri logla (özellikle phone kontrolü için)
+        frappe.log_error(
+            title=f"Receiver Info Log - {invoice_name}",
+            message=json.dumps(receiver_info, indent=2, ensure_ascii=False)
+        )
+
+        # XML üretimi
         xml_content = generate_invoice_xml(doc_si, profile_type, settings)
 
+        # ZIP'e çevir
         mem = io.BytesIO()
         with zipfile.ZipFile(mem, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr(f"{doc_si.name}.xml", xml_content)
         zip_base64 = base64.b64encode(mem.getvalue()).decode()
 
+        # SOAP body oluştur
         soap_body = create_soap_body(zip_base64, integrator, f"{doc_si.name}.zip", receiver_id)
         url = integrator.test_efatura_url if integrator.td_test else integrator.efatura_url
 
@@ -1429,18 +1442,16 @@ def send_invoice_to_finalizer(invoice_name=None):
         }
         resp = requests.post(url, data=soap_body.encode("utf-8"), headers=headers, timeout=60)
 
-        # 🔽 Log sadece detailed_log seçiliyse atılsın + ZIP içeriğini de kontrol et
+        # 🔽 Geniş log (isteğe bağlı)
         if integrator.detailed_log:
-            # ZIP içeriğini kontrol et
             mem_check = io.BytesIO()
             with zipfile.ZipFile(mem_check, "w", zipfile.ZIP_DEFLATED) as zf:
                 zf.writestr(f"{doc_si.name}.xml", xml_content)
-            
-            # ZIP içeriğini oku ve kontrol et
+
             mem_check.seek(0)
             with zipfile.ZipFile(mem_check, "r") as zf:
                 zip_content = zf.read(f"{doc_si.name}.xml").decode('utf-8')
-            
+
             frappe.log_error(
                 f"""🧾 Profile: {profile_type}
 🏷️  Receiver ID used: {receiver_id}
@@ -1620,39 +1631,44 @@ def get_sender_info(settings):
         }
 
 def get_receiver_info(doc, customer_doc, customer_address, profile_type):
-    """Alıcı bilgilerini al"""
+    """Alıcı bilgilerini al (güvenli, sade versiyon)"""
     try:
-        # Tax ID'yi önce customer'dan, sonra doc'tan al
-        tax_id = customer_doc.tax_id or doc.tax_id or ""
-        
-        # İsim ve soyisim ayrıştırma
-        full_name = customer_doc.customer_name or doc.customer_name or ""
+        # Vergi numarası: önce müşteri, sonra belge
+        tax_id = getattr(customer_doc, "tax_id", "") or getattr(doc, "tax_id", "") or ""
+
+        # İsim ve soyisim ayrıştır
+        full_name = getattr(customer_doc, "customer_name", "") or getattr(doc, "customer_name", "")
         first_name, last_name = "", ""
         if full_name:
             parts = full_name.strip().split(None, 1)
             first_name = parts[0]
             last_name = parts[1] if len(parts) > 1 else ""
 
-        # Eğer e-arşivse ve isim varsa, bireysel alanları hazırla
+        # Eğer e-Arşiv ise ve bireysel isim varsa sahıs bilgilerini hazırla
         individual_fields = ""
         if profile_type == "EARSIVFATURA" and first_name:
             individual_fields = f"\n    <SahisAd>{first_name}</SahisAd>"
             if last_name:
                 individual_fields += f"\n    <SahisSoyad>{last_name}</SahisSoyad>"
 
+        # Güvenli getter
+        def safe_get(obj, field):
+            return getattr(obj, field, "") or ""
+
         return {
             'id_type': "VKN" if len(tax_id) == 10 else "TC",
             'id_number': tax_id,
-            'phone': customer_doc.mobile_no or "",
-            'email': customer_doc.email_id or "",
-            'tax_office': customer_doc.custom_tax_office or "",
-            'country': customer_address.country if customer_address else "Türkiye",
-            'city': customer_address.city if customer_address else "",
-            'district': customer_address.county if customer_address else "",
-            'address': f"{customer_address.address_line1 or ''} {customer_address.address_line2 or ''}".strip() if customer_address else "",
+            'phone': safe_get(customer_address, "phone"),
+            'email': safe_get(customer_address, "email_id"),
+            'tax_office': safe_get(customer_doc, "custom_tax_office"),
+            'country': safe_get(customer_address, "country") if customer_address else "Türkiye",
+            'city': safe_get(customer_address, "city") if customer_address else "",
+            'district': safe_get(customer_address, "county") if customer_address else "",
+            'address': f"{safe_get(customer_address, 'address_line1')} {safe_get(customer_address, 'address_line2')}".strip() if customer_address else "",
             'individual_fields': individual_fields,
             'company_name': full_name
         }
+
     except:
         return {
             'id_type': "TC",
@@ -1667,7 +1683,6 @@ def get_receiver_info(doc, customer_doc, customer_address, profile_type):
             'individual_fields': "",
             'company_name': ""
         }
-
 
 
 def get_mapped_unit(settings, original_unit):
