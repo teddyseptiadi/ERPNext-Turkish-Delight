@@ -1822,116 +1822,181 @@ def generate_invoice_xml(doc, profile_type, settings):
     import html
     import uuid
     import json
+    from decimal import Decimal, ROUND_HALF_UP
 
-    uuid_str = str(uuid.uuid4()).upper()
-    frappe.db.set_value("Sales Invoice", doc.name, "td_efatura_uuid", uuid_str)
+    def round_currency(amount, precision=2):
+        """Döviz tutarlarını doğru şekilde yuvarla"""
+        return float(Decimal(str(amount)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
 
-    if profile_type == "EARSIVFATURA":
-        xml_profile = "EARSIVFATURA"
-        scenario = "SATIS"
-    else:
-        xml_profile = "EFATURA"
-        scenario = doc.custom_scenario_type or "SATIS"
+    try:
+        uuid_str = str(uuid.uuid4()).upper()
+        frappe.db.set_value("Sales Invoice", doc.name, "td_efatura_uuid", uuid_str)
 
-    invoice_type = doc.custom_invoice_type or "SATIS"
-    net_total = float(doc.net_total or 0)
-    grand_total = float(doc.grand_total or 0)
-    toplam_iskonto = sum([item.discount_amount or 0 for item in doc.items])
-    conversion_rate = float(doc.conversion_rate or 1.0)
+        if profile_type == "EARSIVFATURA":
+            xml_profile = "EARSIVFATURA"
+            scenario = "SATIS"
+        else:
+            xml_profile = "EFATURA"
+            scenario = doc.custom_scenario_type or "SATIS"
 
-    customer_doc = frappe.get_doc("Customer", doc.customer)
+        invoice_type = doc.custom_invoice_type or "SATIS"
+        conversion_rate = float(doc.conversion_rate or 1.0)
 
-    customer_address = None
-    if doc.customer_address:
-        try:
-            customer_address = frappe.get_doc("Address", doc.customer_address)
-        except:
-            pass
-
-    sender_info = get_sender_info(settings)
-    receiver_info = get_receiver_info(doc, customer_doc, customer_address, profile_type)
-
-    sender_info['country'] = "Türkiye"
-    receiver_info['country'] = "Türkiye"
-    receiver_info['individual_fields'] = receiver_info.get('individual_fields', "")
-
-    item_tax_map = {}
-    for item in doc.items:
-        item_tax_map[item.item_code] = {"rate": 0.0, "amount": 0.0}
-
-    for tax in doc.taxes:
-        if tax.item_wise_tax_detail:
+        customer_doc = frappe.get_doc("Customer", doc.customer)
+        customer_address = None
+        if doc.customer_address:
             try:
-                parsed = json.loads(tax.item_wise_tax_detail)
-                for item_code, tax_data in parsed.items():
-                    if isinstance(tax_data, list) and len(tax_data) >= 2:
-                        rate = float(tax_data[0] or 0)
-                        amount = float(tax_data[1] or 0)
-                    elif isinstance(tax_data, dict):
-                        rate = float(tax_data.get('rate', 0))
-                        amount = float(tax_data.get('amount', 0))
-                    else:
-                        continue
-
-                    if item_code in item_tax_map:
-                        item_tax_map[item_code]['rate'] += rate
-                        item_tax_map[item_code]['amount'] += amount
-                    else:
-                        item_tax_map[item_code] = {"rate": rate, "amount": amount}
+                customer_address = frappe.get_doc("Address", doc.customer_address)
             except Exception as e:
-                print(f"Error parsing tax details: {e}")
+                frappe.log_error(message=str(e), title="Address fetch error")
 
-    if all(v['rate'] == 0.0 for v in item_tax_map.values()) and doc.taxes:
-        default_tax_rate = float(doc.taxes[0].rate or 0)
+        sender_info = get_sender_info(settings)
+        receiver_info = get_receiver_info(doc, customer_doc, customer_address, profile_type)
+
+        sender_info['country'] = "Türkiye"
+        receiver_info['country'] = "Türkiye"
+        receiver_info['individual_fields'] = receiver_info.get('individual_fields', "")
+
+        # Vergi haritası
+        item_tax_map = {}
+        for tax in doc.taxes:
+            if tax.item_wise_tax_detail:
+                try:
+                    parsed = json.loads(tax.item_wise_tax_detail)
+                    for item_code, tax_data in parsed.items():
+                        if isinstance(tax_data, list) and len(tax_data) >= 2:
+                            rate = float(tax_data[0] or 0)
+                            amount = float(tax_data[1] or 0)
+                        elif isinstance(tax_data, dict):
+                            rate = float(tax_data.get('rate', 0))
+                            amount = float(tax_data.get('amount', 0))
+                        else:
+                            continue
+                        item_tax_map.setdefault(item_code, []).append({
+                            "rate": rate,
+                            "amount": amount,
+                            "tax_name": tax.account_head
+                        })
+                except Exception as e:
+                    frappe.log_error(message=f"Error parsing tax details: {e}", title="Tax parse error")
+
+        # Eğer vergi detayı yoksa varsayılan uygula
+        if all(not v for v in item_tax_map.values()) and doc.taxes:
+            default_tax_rate = float(doc.taxes[0].rate or 0)
+            for item in doc.items:
+                tax_amount = (item.amount * default_tax_rate) / 100
+                item_tax_map[item.item_code] = [{
+                    "rate": default_tax_rate,
+                    "amount": tax_amount,
+                    "tax_name": "Varsayılan KDV"
+                }]
+
+        # Tutarları hesapla - önce orijinal para biriminde
+        calculated_net_total = 0
+        calculated_grand_total = 0
+        calculated_tax_total = 0
+        calculated_discount_total = 0
+
+        # Item bazında hesaplamalar
         for item in doc.items:
-            tax_amount = (item.amount * default_tax_rate) / 100
-            item_tax_map[item.item_code] = {"rate": default_tax_rate, "amount": tax_amount}
+            item_amount = float(item.amount or 0)
+            item_discount = float(item.discount_amount or 0)
+            
+            # Vergi tutarını hesapla
+            vergi_satirlari = item_tax_map.get(item.item_code, [])
+            item_tax_total = sum(v["amount"] for v in vergi_satirlari if v["amount"] > 0)
+            
+            calculated_net_total += item_amount
+            calculated_tax_total += item_tax_total
+            calculated_discount_total += item_discount
 
-    # Currency fix: Convert TRY tax amounts to doc.currency if needed
-    if doc.currency != "TRY":
-        for item_code in item_tax_map:
-            item_tax_map[item_code]["amount"] = round(item_tax_map[item_code]["amount"] / conversion_rate, 2)
+        calculated_grand_total = calculated_net_total + calculated_tax_total
 
-        net_total = round(net_total / conversion_rate, 2)
-        grand_total = round(grand_total / conversion_rate, 2)
-        toplam_iskonto = round(toplam_iskonto / conversion_rate, 2)
+        # Eğer TRY değilse ve conversion_rate varsa çevir
+        if doc.currency != "TRY" and conversion_rate != 1.0:
+            # Vergi tutarlarını çevir
+            for item_code in item_tax_map:
+                for tax in item_tax_map[item_code]:
+                    tax["amount"] = round_currency(tax["amount"] / conversion_rate)
+            
+            # Ana tutarları çevir
+            net_total = round_currency(calculated_net_total / conversion_rate)
+            grand_total = round_currency(calculated_grand_total / conversion_rate)
+            # Toplam iskonto çevrilmez - zaten döviz cinsinden
+            toplam_iskonto = round_currency(calculated_discount_total)
+        else:
+            net_total = round_currency(calculated_net_total)
+            grand_total = round_currency(calculated_grand_total)
+            toplam_iskonto = round_currency(calculated_discount_total)
 
+        def get_vergi_detaylari(item_code, item_amount):
+            vergi_satirlari = item_tax_map.get(item_code, [])
+            aktif_vergiler = [v for v in vergi_satirlari if v["amount"] > 0]
 
-    def generate_normal_satir(i, item):
-        tax_info = item_tax_map.get(item.item_code, {"rate": 0.0, "amount": 0.0})
-        rate = tax_info.get("rate", 0.0)
-        amount = tax_info.get("amount", 0.0)
-        mapped_unit = get_mapped_unit(settings, item.uom)
-        return f'''
+            toplam_vergi = sum(round_currency(v["amount"]) for v in aktif_vergiler)
+
+            detay_xml = f'<ToplamVergiTutar ParaBirimi="{doc.currency}">{toplam_vergi:.2f}</ToplamVergiTutar>'
+            for vergi in aktif_vergiler:
+                vergi_tutari = round_currency(vergi["amount"])
+                detay_xml += f'''
+      <FaturaVergiDetay>
+        <MatrahTutar ParaBirimi="{doc.currency}">{item_amount:.2f}</MatrahTutar>
+        <VergiTutar ParaBirimi="{doc.currency}">{vergi_tutari:.2f}</VergiTutar>
+        <VergiOran>{vergi["rate"]:.2f}</VergiOran>
+        <Kategori>
+          <VergiAdi>KDV</VergiAdi>
+          <VergiKodu>0015</VergiKodu>
+        </Kategori>
+      </FaturaVergiDetay>'''
+            return detay_xml
+
+        def generate_normal_satir(i, item):
+            mapped_unit = get_mapped_unit(settings, item.uom)
+
+            iskonto_orani = float(item.discount_percentage or 0)
+            iskonto_tutari = round_currency(float(item.discount_amount or 0))
+            item_amount = round_currency(float(item.amount or 0))
+
+            vergi_xml = get_vergi_detaylari(item.item_code, item_amount)
+
+            return f'''
   <FaturaSatir>
     <SatirNo>{i+1}</SatirNo>
     <UrunAdi>{html.escape(item.item_name)}</UrunAdi>
     <UrunKodu>{html.escape(item.item_code)}</UrunKodu>
     <OlcuBirimi>{mapped_unit}</OlcuBirimi>
-    <BirimFiyati ParaBirimi="{doc.currency}">{item.rate}</BirimFiyati>
+    <BirimFiyati ParaBirimi="{doc.currency}">{item.price_list_rate}</BirimFiyati>
     <Miktar>{item.qty}</Miktar>
     <Vergi>
-      <ToplamVergiTutar ParaBirimi="{doc.currency}">{amount:.2f}</ToplamVergiTutar>
-      <FaturaVergiDetay>
-        <MatrahTutar ParaBirimi="{doc.currency}">{item.amount:.2f}</MatrahTutar>
-        <VergiTutar ParaBirimi="{doc.currency}">{amount:.2f}</VergiTutar>
-        <VergiOran>{rate:.2f}</VergiOran>
-        <Kategori>
-          <VergiAdi>KDV</VergiAdi>
-          <VergiKodu>0015</VergiKodu>
-        </Kategori>
-      </FaturaVergiDetay>
+      {vergi_xml}
     </Vergi>
-    <IskontoOrani>0</IskontoOrani>
-    <IskontoTutari>0</IskontoTutari>
+    <IskontoOrani>{iskonto_orani:.2f}</IskontoOrani>
+    <IskontoTutari ParaBirimi="{doc.currency}">{iskonto_tutari:.2f}</IskontoTutari>
   </FaturaSatir>'''
 
-    satirlar = "".join([generate_normal_satir(i, item) for i, item in enumerate(doc.items)])
+        satirlar = "".join([generate_normal_satir(i, item) for i, item in enumerate(doc.items)])
 
-    posting_time = str(doc.posting_time or '12:00:00').split('.')[0]
-    notes_block = generate_notes_block(doc, settings)
+        posting_time = str(doc.posting_time or '12:00:00').split('.')[0]
+        notes_block = generate_notes_block(doc, settings)
 
-    xml_template = f"""<?xml version="1.0"?>
+        # Toplam kontrol - hesaplanan değerler ile doc değerlerini karşılaştır
+        doc_net_total = round_currency(float(doc.net_total or 0))
+        doc_grand_total = round_currency(float(doc.grand_total or 0))
+        
+        # Eğer büyük fark varsa hesaplanan değerleri kullan
+        if abs(net_total - doc_net_total) > 0.05:
+            frappe.log_error(
+                message=f"Net total mismatch: calculated={net_total}, doc={doc_net_total}",
+                title="Invoice Total Warning"
+            )
+        
+        if abs(grand_total - doc_grand_total) > 0.05:
+            frappe.log_error(
+                message=f"Grand total mismatch: calculated={grand_total}, doc={doc_grand_total}",
+                title="Invoice Total Warning"
+            )
+
+        xml_template = f"""<?xml version="1.0"?>
 <Fatura xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <Profil>{xml_profile}</Profil>
   <Senaryo>{scenario}</Senaryo>
@@ -1974,7 +2039,11 @@ def generate_invoice_xml(doc, profile_type, settings):
   <DovizKuru>{conversion_rate}</DovizKuru>
 </Fatura>"""
 
-    return xml_template
+        return xml_template
+
+    except Exception as e:
+        frappe.log_error(message=str(e), title="generate_invoice_xml hata")
+        raise
 def create_soap_body(zip_base64, integrator, file_name="invoice.zip", receiver_id="22222222222"):
     password = integrator.get_password('password') if hasattr(integrator, 'get_password') else integrator.password
     user_id = integrator.username
