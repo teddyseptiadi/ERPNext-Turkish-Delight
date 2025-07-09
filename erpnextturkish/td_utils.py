@@ -1381,8 +1381,8 @@ def send_invoice_to_finalizer(invoice_name=None):
             return {"status": "fail", "error": "Integration is disabled"}
 
         doc_si = frappe.get_doc("Sales Invoice", invoice_name)
-
         customer = frappe.get_doc("Customer", doc_si.customer)
+
         if integrator.td_enable:
             missing_fields = []
 
@@ -1406,6 +1406,13 @@ def send_invoice_to_finalizer(invoice_name=None):
             return {"status": "fail", "error": "Tax ID (receiver_id) is required"}
 
         profile_result = check_profile(receiver_id, company)
+
+        # Log full profile result
+        frappe.log_error(
+            title=f"Profile Check Result - {invoice_name}",
+            message=json.dumps(profile_result, indent=2, ensure_ascii=False)
+        )
+
         if profile_result.get("status") != "success":
             return {"status": "fail", "error": f"Profile check failed: {profile_result.get('error')}"}
 
@@ -1414,11 +1421,11 @@ def send_invoice_to_finalizer(invoice_name=None):
         frappe.db.set_value("Sales Invoice", invoice_name, "custom_profile_type", profile_type)
         frappe.db.commit()
 
-        # 🧾 Alıcı bilgilerini getir
+        # Alıcı bilgilerini getir
         customer_address = frappe.get_doc("Address", doc_si.customer_address) if doc_si.customer_address else None
         receiver_info = get_receiver_info(doc_si, customer, customer_address, profile_type)
 
-        # 📋 Alıcı bilgileri logla (özellikle phone kontrolü için)
+        # Log alıcı bilgileri
         frappe.log_error(
             title=f"Receiver Info Log - {invoice_name}",
             message=json.dumps(receiver_info, indent=2, ensure_ascii=False)
@@ -1442,7 +1449,7 @@ def send_invoice_to_finalizer(invoice_name=None):
         }
         resp = requests.post(url, data=soap_body.encode("utf-8"), headers=headers, timeout=60)
 
-        # 🔽 Geniş log (isteğe bağlı)
+        # Geniş log
         if integrator.detailed_log:
             mem_check = io.BytesIO()
             with zipfile.ZipFile(mem_check, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -1455,6 +1462,9 @@ def send_invoice_to_finalizer(invoice_name=None):
             frappe.log_error(
                 f"""🧾 Profile: {profile_type}
 🏷️  Receiver ID used: {receiver_id}
+🔍 Profile Check Result:
+{json.dumps(profile_result, indent=2, ensure_ascii=False)}
+
 📁 ZIP içeriği:
 {zip_content}
 
@@ -1481,7 +1491,6 @@ HTTP {resp.status_code}
     except Exception as e:
         frappe.log_error(str(e), f"Finalizer Send Error - {invoice_name}")
         return {"status": "fail", "error": str(e)}
-
 
 
 
@@ -1887,9 +1896,6 @@ def generate_invoice_xml(doc, profile_type, settings):
         grand_total = round(grand_total / conversion_rate, 2)
         toplam_iskonto = round(toplam_iskonto / conversion_rate, 2)
 
-    def get_mapped_unit(settings, uom):
-        # Dummy implementation – replace with real unit mapping
-        return "C62"
 
     def generate_normal_satir(i, item):
         tax_info = item_tax_map.get(item.item_code, {"rate": 0.0, "amount": 0.0})
