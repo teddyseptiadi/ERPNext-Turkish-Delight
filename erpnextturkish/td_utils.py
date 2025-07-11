@@ -1822,10 +1822,10 @@ def generate_invoice_xml(doc, profile_type, settings):
     import html
     import uuid
     import json
+    import io
     from decimal import Decimal, ROUND_HALF_UP
 
     def round_currency(amount, precision=2):
-        """Döviz tutarlarını doğru şekilde yuvarla"""
         return float(Decimal(str(amount)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
 
     try:
@@ -1857,7 +1857,6 @@ def generate_invoice_xml(doc, profile_type, settings):
         receiver_info['country'] = "Türkiye"
         receiver_info['individual_fields'] = receiver_info.get('individual_fields', "")
 
-        # Vergi haritası
         item_tax_map = {}
         for tax in doc.taxes:
             if tax.item_wise_tax_detail:
@@ -1880,7 +1879,6 @@ def generate_invoice_xml(doc, profile_type, settings):
                 except Exception as e:
                     frappe.log_error(message=f"Error parsing tax details: {e}", title="Tax parse error")
 
-        # Eğer vergi detayı yoksa varsayılan uygula
         if all(not v for v in item_tax_map.values()) and doc.taxes:
             default_tax_rate = float(doc.taxes[0].rate or 0)
             for item in doc.items:
@@ -1891,43 +1889,14 @@ def generate_invoice_xml(doc, profile_type, settings):
                     "tax_name": "Varsayılan KDV"
                 }]
 
-        # Tutarları hesapla - önce orijinal para biriminde
-        calculated_net_total = 0
-        calculated_grand_total = 0
-        calculated_tax_total = 0
-        calculated_discount_total = 0
-
-        # Item bazında hesaplamalar
-        for item in doc.items:
-            item_amount = float(item.amount or 0)
-            item_discount = float(item.discount_amount or 0)
-            
-            # Vergi tutarını hesapla
-            vergi_satirlari = item_tax_map.get(item.item_code, [])
-            item_tax_total = sum(v["amount"] for v in vergi_satirlari if v["amount"] > 0)
-            
-            calculated_net_total += item_amount
-            calculated_tax_total += item_tax_total
-            calculated_discount_total += item_discount
-
-        calculated_grand_total = calculated_net_total + calculated_tax_total
-
-        # Eğer TRY değilse ve conversion_rate varsa çevir
         if doc.currency != "TRY" and conversion_rate != 1.0:
-            # Vergi tutarlarını çevir
             for item_code in item_tax_map:
                 for tax in item_tax_map[item_code]:
                     tax["amount"] = round_currency(tax["amount"] / conversion_rate)
-            
-            # Ana tutarları çevir
-            net_total = round_currency(calculated_net_total / conversion_rate)
-            grand_total = round_currency(calculated_grand_total / conversion_rate)
-            # Toplam iskonto çevrilmez - zaten döviz cinsinden
-            toplam_iskonto = round_currency(calculated_discount_total)
-        else:
-            net_total = round_currency(calculated_net_total)
-            grand_total = round_currency(calculated_grand_total)
-            toplam_iskonto = round_currency(calculated_discount_total)
+
+        net_total = round_currency(float(doc.net_total or 0))
+        grand_total = round_currency(float(doc.grand_total or 0))
+        toplam_iskonto = round_currency(float(doc.discount_amount or 0))
 
         def get_vergi_detaylari(item_code, item_amount):
             vergi_satirlari = item_tax_map.get(item_code, [])
@@ -1957,6 +1926,23 @@ def generate_invoice_xml(doc, profile_type, settings):
             iskonto_tutari = round_currency(float(item.discount_amount or 0))
             item_amount = round_currency(float(item.amount or 0))
 
+            # LOG SATIRI: Discount ve hesaplama detayları
+            frappe.log_error(
+                title=f"İskonto Satır Logu - {doc.name} - Satır {i+1}",
+                message=f"""🧾 Satır: {i+1}
+Item Code: {item.item_code}
+Item Name: {item.item_name}
+Qty: {item.qty}
+Rate: {item.rate}
+Price List Rate: {item.price_list_rate}
+Amount: {item.amount}
+Discount %: {item.discount_percentage}
+Discount Amount: {item.discount_amount}
+➡️ Kullanılan İskonto Oranı: {iskonto_orani}
+➡️ Kullanılan İskonto Tutarı: {iskonto_tutari}
+"""
+            )
+
             vergi_xml = get_vergi_detaylari(item.item_code, item_amount)
 
             return f'''
@@ -1975,24 +1961,18 @@ def generate_invoice_xml(doc, profile_type, settings):
   </FaturaSatir>'''
 
         satirlar = "".join([generate_normal_satir(i, item) for i, item in enumerate(doc.items)])
-
         posting_time = str(doc.posting_time or '12:00:00').split('.')[0]
         notes_block = generate_notes_block(doc, settings)
 
-        # Toplam kontrol - hesaplanan değerler ile doc değerlerini karşılaştır
-        doc_net_total = round_currency(float(doc.net_total or 0))
-        doc_grand_total = round_currency(float(doc.grand_total or 0))
-        
-        # Eğer büyük fark varsa hesaplanan değerleri kullan
-        if abs(net_total - doc_net_total) > 0.05:
+        if abs(net_total - round_currency(doc.net_total or 0)) > 0.05:
             frappe.log_error(
-                message=f"Net total mismatch: calculated={net_total}, doc={doc_net_total}",
+                message=f"Net total mismatch: calculated={net_total}, doc={doc.net_total}",
                 title="Invoice Total Warning"
             )
-        
-        if abs(grand_total - doc_grand_total) > 0.05:
+
+        if abs(grand_total - round_currency(doc.grand_total or 0)) > 0.05:
             frappe.log_error(
-                message=f"Grand total mismatch: calculated={grand_total}, doc={doc_grand_total}",
+                message=f"Grand total mismatch: calculated={grand_total}, doc={doc.grand_total}",
                 title="Invoice Total Warning"
             )
 
@@ -2044,6 +2024,7 @@ def generate_invoice_xml(doc, profile_type, settings):
     except Exception as e:
         frappe.log_error(message=str(e), title="generate_invoice_xml hata")
         raise
+
 def create_soap_body(zip_base64, integrator, file_name="invoice.zip", receiver_id="22222222222"):
     password = integrator.get_password('password') if hasattr(integrator, 'get_password') else integrator.password
     user_id = integrator.username
