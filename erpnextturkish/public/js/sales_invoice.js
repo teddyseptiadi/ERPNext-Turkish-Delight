@@ -29,7 +29,7 @@ function EInvoiceProcess(frm, strOperation) {
 
 frappe.ui.form.on('Sales Invoice', {
     refresh(frm) {
-        if (frm.doc.docstatus === 0 || frm.doc.docstatus === 1) {
+        if (frm.doc.docstatus === 1) {
             frappe.db.get_list('TD EInvoice Settings', {
                 filters: { company: frm.doc.company },
                 fields: ['name', 'integrator']
