@@ -2109,6 +2109,9 @@ def send_delivery_note_to_finalizer(delivery_note_name=None):
                 fields_str = ", ".join(missing_fields)
                 frappe.throw(f"E-İrsaliye entegrasyonu aktif. Aşağıdaki zorunlu alanlar eksik: {fields_str}.")
 
+        # Posta kodu validasyonu
+        validate_postal_codes(doc_dn, ewaybill_settings)
+
         receiver_id = customer.tax_id or doc_dn.customer_name
         if not receiver_id:
             return {"status": "fail", "error": "Tax ID (receiver_id) is required"}
@@ -2158,6 +2161,28 @@ HTTP {resp.status_code}
     except Exception as e:
         frappe.log_error(str(e), f"E-İrsaliye Send Error - {delivery_note_name}")
         return {"status": "fail", "error": str(e)}
+
+
+def validate_postal_codes(doc_dn, ewaybill_settings=None):
+    """Sadece müşteri adresi için posta kodu kontrolü yapar"""
+    missing_postal_codes = []
+    
+    # Müşteri posta kodu kontrolü
+    if doc_dn.customer_address:
+        try:
+            customer_address = frappe.get_doc("Address", doc_dn.customer_address)
+            if not customer_address.pincode or not str(customer_address.pincode).strip():
+                missing_postal_codes.append("Müşteri adresi posta kodu")
+        except:
+            missing_postal_codes.append("Müşteri adresi posta kodu")
+    else:
+        missing_postal_codes.append("Müşteri adresi posta kodu")
+    
+    if missing_postal_codes:
+        fields_str = ", ".join(missing_postal_codes)
+        frappe.throw(f"E-İrsaliye için zorunlu posta kodu alanları eksik: {fields_str}")
+
+
 def get_einvoice_unit(item_uom, ewaybill_settings):
     """
     Delivery Note'daki UOM'u e-fatura için uygun birime çevirir
@@ -2180,6 +2205,7 @@ def get_einvoice_unit(item_uom, ewaybill_settings):
 def generate_delivery_note_xml(doc, ewaybill_settings):
     """E-İrsaliye XML oluştur"""
     import uuid
+    import html
 
     uuid_str = str(uuid.uuid4()).upper()
     doc.custom_td_eirsaliye_uuid = uuid_str
@@ -2193,66 +2219,48 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
         except:
             pass
 
-    # TD EWayBill Settings'den sender bilgilerini al
+    def safe_get(obj, field):
+        return getattr(obj, field, "") or ""
+
     sender_info = get_sender_info_from_ewaybill_settings(ewaybill_settings)
 
     receiver_info = {
         'tax_id': customer_doc.tax_id,
         'company_name': customer_doc.customer_name,
-        'phone': customer_doc.mobile_no or "0555 555 5555",
-        'email': customer_doc.email_id or "info@test.com",
+        'phone': safe_get(customer_address, "phone"),
+        'email': safe_get(customer_address, "email_id"),
         'tax_office': customer_doc.custom_tax_office,
-        'city': customer_address.city if customer_address else "İstanbul",
-        'district': customer_address.county if customer_address else "Başakşehir",
-        'address': f"{customer_address.address_line1 or ''} {customer_address.address_line2 or ''}".strip() if customer_address else "Test Adres",
-        'country': customer_address.country if customer_address else "Türkiye"
+        'city': safe_get(customer_address, "city"),
+        'district': safe_get(customer_address, "county"),
+        'address': f"{safe_get(customer_address, 'address_line1')} {safe_get(customer_address, 'address_line2')}".strip(),
+        'country': safe_get(customer_address, "country"),
+        'pincode': safe_get(customer_address, "pincode")
     }
 
-    # Şoför bilgileri - Varsayılan değerler (try bloğundan ÖNCE tanımla)
-    sofor_adi = "SOFOR"
-    sofor_soyadi = "BILINMIYOR"
-    sofor_tc = "12345678901"
-    plaka = ""  # Boş string olarak başlat
+    # Şoför bilgileri
+    sofor_adi = ""
+    sofor_soyadi = ""
+    sofor_tc = ""
+    plaka = ""
 
-    # Şoför bilgilerini dinamik olarak al
+    if doc.driver_name:
+        parts = doc.driver_name.strip().split()
+        if len(parts) >= 2:
+            sofor_adi = " ".join(parts[:-1])
+            sofor_soyadi = parts[-1]
+        elif len(parts) == 1:
+            sofor_adi = parts[0]
+
     if doc.driver:
         try:
             driver_doc = frappe.get_doc("Driver", doc.driver)
-            print(f"Driver Doc: {driver_doc.as_dict()}")  # Debug için - tüm alanları göster
-            
-            # Şoför adı ve soyadı
-            if hasattr(driver_doc, 'driver_name') and driver_doc.driver_name:
-                ad_soyad = driver_doc.driver_name.strip().split()
-                if len(ad_soyad) >= 2:
-                    sofor_adi = " ".join(ad_soyad[:-1])
-                    sofor_soyadi = ad_soyad[-1]
-                elif len(ad_soyad) == 1:
-                    sofor_adi = ad_soyad[0]
-                    sofor_soyadi = "BILINMIYOR"
-
-            # TC Kimlik numarası - farklı alan adlarını kontrol et
-            if hasattr(driver_doc, 'tc_no') and driver_doc.tc_no:
-                sofor_tc = str(driver_doc.tc_no)
-            elif hasattr(driver_doc, 'custom_driver_id') and driver_doc.custom_driver_id:
-                sofor_tc = str(driver_doc.custom_driver_id)
-            elif hasattr(driver_doc, 'driver_id') and driver_doc.driver_id:
-                sofor_tc = str(driver_doc.driver_id)
-
-            # Plaka bilgisi - license_number alanından al (sizin durumunuzda bu doğru alan)
-            if hasattr(driver_doc, 'license_number') and driver_doc.license_number:
-                plaka = str(driver_doc.license_number)
-            elif hasattr(driver_doc, 'license_plate') and driver_doc.license_plate:
-                plaka = str(driver_doc.license_plate)
-            elif hasattr(driver_doc, 'custom_license_plate') and driver_doc.custom_license_plate:
-                plaka = str(driver_doc.custom_license_plate)
-            elif hasattr(driver_doc, 'vehicle_no') and driver_doc.vehicle_no:
-                plaka = str(driver_doc.vehicle_no)
-
-            print(f"Şoför Adı: {sofor_adi}, Soyadı: {sofor_soyadi}, TC: {sofor_tc}, Plaka: {plaka}")  # Debug için
-            
+            sofor_tc = str(getattr(driver_doc, "custom_driver_id", "") or "")
+            plaka = str(getattr(driver_doc, "license_number", "") or
+                        getattr(driver_doc, "license_plate", "") or
+                        getattr(driver_doc, "custom_license_plate", "") or
+                        getattr(driver_doc, "vehicle_no", "") or "")
         except Exception as e:
             print(f"Driver bilgisi alınırken hata: {e}")
-            # Hata durumunda varsayılan değerler zaten yukarıda tanımlandı
 
     # Taşıyıcı bilgileri
     tasiyici_vkn = None
@@ -2280,14 +2288,12 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
         'siparis_no': doc.name,
         'belge_tarihi': doc.posting_date or frappe.utils.today(),
         'belge_no': doc.name,
-        'posta_kodu': customer_address.pincode if customer_address else "34200"
+        'posta_kodu': receiver_info['pincode']
     }
 
     satirlar = ""
     for i, item in enumerate(doc.items):
-        # UOM mapping'i uygula
         einvoice_unit = get_einvoice_unit(item.uom, ewaybill_settings)
-        
         satirlar += f'''
   <FaturaSatir>
     <SatirNo>{i+1}</SatirNo>
@@ -2320,7 +2326,7 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
     <Tel>{sender_info['phone']}</Tel>
     <Eposta>{sender_info['email']}</Eposta>
     <VergiDairesi>{sender_info['tax_office']}</VergiDairesi>
-    <Ulke>Türkiye</Ulke>
+    <Ulke>{sender_info['country']}</Ulke>
     <Sehir>{sender_info['city']}</Sehir>
     <Ilce>{sender_info['district']}</Ilce>
     <AdresMahCad>{sender_info['address']}</AdresMahCad>
@@ -2334,7 +2340,7 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
     <VergiDairesi>{receiver_info['tax_office']}</VergiDairesi>
     <Ulke>{receiver_info['country']}</Ulke>
     <Sehir>{receiver_info['city']}</Sehir>
-    <Ilce>Ataköy</Ilce>
+    <Ilce>{receiver_info['district']}</Ilce>
     <AdresMahCad>{receiver_info['address']}</AdresMahCad>
   </FaturaAlici>
   <Irsaliye>
@@ -2342,9 +2348,9 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
       <VknTc>VKN</VknTc>
       <VknTcNo>{tasiyici_info['tax_id']}</VknTcNo>
       <Unvan>{html.escape(tasiyici_info['company_name'])}</Unvan>
-      <Plaka>{doc.vehicle_no}</Plaka>
-      <SoforAdi>{doc.driver_name.split()[0] if doc.driver_name and len(doc.driver_name.split()) > 0 else 'SOFOR'}</SoforAdi>
-      <SoforSoyadi>{doc.driver_name.split()[1] if doc.driver_name and len(doc.driver_name.split()) > 1 else 'BILINMIYOR'}</SoforSoyadi>
+      <Plaka>{doc.vehicle_no or ""}</Plaka>
+      <SoforAdi>{tasiyici_info['sofor_adi']}</SoforAdi>
+      <SoforSoyadi>{tasiyici_info['sofor_soyadi']}</SoforSoyadi>
       <SoforTcNo>{tasiyici_info['sofor_tc']}</SoforTcNo>
     </Tasiyici>  
     <Sevk>
@@ -2356,9 +2362,9 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
       <BelgeNo>{sevk_info['belge_no']}</BelgeNo>
       <Ulke>{receiver_info['country']}</Ulke>
       <Sehir>{receiver_info['city']}</Sehir>
-      <Ilce>Ataköy</Ilce>
+      <Ilce>{receiver_info['district']}</Ilce>
       <AdresMahCad>{receiver_info['address']}</AdresMahCad>
-      <PostaKodu>32200</PostaKodu>
+      <PostaKodu>{sevk_info['posta_kodu']}</PostaKodu>
     </Sevk>   
  </Irsaliye>
 {satirlar}
@@ -2370,7 +2376,6 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
 </Fatura>"""
 
     return xml_template
-
 
 def get_sender_info_from_ewaybill_settings(ewaybill_settings):
     """TD EWayBill Settings'den gönderici bilgilerini al"""
@@ -2384,31 +2389,33 @@ def get_sender_info_from_ewaybill_settings(ewaybill_settings):
         return {
             'tax_id': ewaybill_settings.central_registration_system or (company_doc.tax_id if company_doc else None),
             'company_name': company_name,
-            'phone': getattr(ewaybill_settings, "phone", None) or "5355765766",
-            'email': getattr(ewaybill_settings, "email", None) or "testmail@test.com",
+            'phone': getattr(ewaybill_settings, "phone", None) or "",
+            'email': getattr(ewaybill_settings, "email", None) or "",
             'fax': getattr(ewaybill_settings, "fax", None) or "",
             'website': getattr(ewaybill_settings, "website", None) or "",
-            'tax_office': ewaybill_settings.tax_office or "Merkez Vergi Dairesi",
-            'country': ewaybill_settings.country or "Türkiye",
-            'city': ewaybill_settings.city or "İstanbul",
-            'district': ewaybill_settings.district or "Merkez",
-            'address': ewaybill_settings.address or ""
+            'tax_office': ewaybill_settings.tax_office or "",
+            'country': ewaybill_settings.country or "",
+            'city': ewaybill_settings.city or "",
+            'district': ewaybill_settings.district or "",
+            'address': ewaybill_settings.address or "",
+            'postal_code': getattr(ewaybill_settings, 'postal_code', None) or ""
         }
 
     except Exception as e:
         frappe.log_error(f"get_sender_info_from_ewaybill_settings error: {str(e)}", "EWayBill Sender Info Error")
         return {
             'tax_id': None, 
-            'company_name': getattr(ewaybill_settings, "company_name", None) or "Default Company",
-            'phone': "5355765766",
-            'email': "testmail@test.com",
+            'company_name': getattr(ewaybill_settings, "company_name", None) or "",
+            'phone': "",
+            'email': "",
             'fax': "",
             'website': "",
-            'tax_office': "Merkez Vergi Dairesi", 
-            'country': "Türkiye", 
-            'city': "İstanbul", 
-            'district': "Merkez", 
-            'address': ""
+            'tax_office': "", 
+            'country': "", 
+            'city': "", 
+            'district': "", 
+            'address': "",
+            'postal_code': ""
         }
 
 
@@ -2476,4 +2483,139 @@ def check_response_success(status_code, response_text):
             pass
     return True
 
+import frappe
+import xml.etree.ElementTree as ET
+import json
+import traceback
 
+@frappe.whitelist()
+def parse_xml_and_fill_table(xml_string, docname):
+    # XML başını temizle
+    lines = xml_string.strip().splitlines()
+    for i, line in enumerate(lines):
+        if line.strip().startswith("<?xml"):
+            xml_string = "\n".join(lines[i:])
+            break
+
+    try:
+        root = ET.fromstring(xml_string)
+    except ET.ParseError as e:
+        frappe.throw(f"XML parse edilemedi: {str(e)}")
+
+    doc = frappe.get_doc("TD EInvoice Inbox", docname)
+
+    invoice_number = root.findtext("No")
+    invoice_date = root.findtext("Tarih")
+    invoice_type = root.findtext("Tip")
+    supplier_name = root.findtext("FaturaSahibi/Unvan")
+    total = root.findtext("ToplamVergiHaricTutar")
+    general_total = root.findtext("OdenecekTutar")
+
+    # Vergi bilgisi
+    tax_node = root.find("FaturaSatir/Vergi/FaturaVergiDetay/VergiTutar")
+    tax = float(tax_node.text) if tax_node is not None else 0
+
+    # Ürün bilgilerini topla
+    items = []
+    for item_node in root.findall("FaturaSatir"):
+        item_name = item_node.findtext("UrunAdi") or "XML Ürün"
+        item_code = item_node.findtext("UrunKodu") or item_name
+        qty = float(item_node.findtext("Miktar") or 1)
+        rate = float(item_node.findtext("BirimFiyati") or 0)
+
+        items.append({
+            "item_code": item_code,
+            "item_name": item_name,
+            "qty": qty,
+            "rate": rate
+        })
+
+    # Tabloya yalnızca fatura özeti yaz
+    doc.append("invoices_received", {
+        "invoice_number": invoice_number,
+        "date": invoice_date,
+        "invoice_type": invoice_type,
+        "supplier": supplier_name,
+        "total": float(total or 0),
+        "tax": tax,
+        "general_total": float(general_total or 0),
+        "custom_invoice_type": invoice_type,
+        "custom_selected": 0
+    })
+    doc.save()
+
+    # Ürünleri cache'e yaz (1 saat geçerli)
+    cache_key = f"xml_cache::{docname}::{invoice_number}"
+    frappe.cache().set_value(cache_key, json.dumps(items), expires_in_sec=3600)
+
+    return {"status": "ok"}
+
+
+@frappe.whitelist()
+def create_invoices_from_selected(rows):
+    rows = json.loads(rows) if isinstance(rows, str) else rows
+    created = []
+
+    try:
+        for row in rows:
+            invoice_number = row.get("invoice_number")
+            docname = row.get("parent")
+            cache_key = f"xml_cache::{docname}::{invoice_number}"
+            items_data = frappe.cache().get_value(cache_key)
+
+            if not items_data:
+                frappe.throw(f"Faturanın ürün bilgisi cache'de yok. Lütfen XML'i yeniden yükleyin. ({invoice_number})")
+
+            items = json.loads(items_data)
+            supplier = get_or_create_supplier(row.get("supplier"))
+
+            pi = frappe.new_doc("Purchase Invoice")
+            pi.supplier = supplier
+            pi.posting_date = row.get("date")
+            pi.bill_no = invoice_number
+            pi.custom_invoice_type = row.get("custom_invoice_type")
+            pi.currency = "TRY"
+
+            for item in items:
+                item_code = get_or_create_item_code(item["item_code"], item["item_name"])
+                pi.append("items", {
+                    "item_code": item_code,
+                    "qty": item["qty"],
+                    "rate": item["rate"]
+                })
+
+            pi.insert(ignore_permissions=True)
+            pi.submit()
+            created.append(pi.name)
+
+    except Exception as e:
+        frappe.log_error(f"Hata: {str(e)}\n{traceback.format_exc()}", "Fatura Oluşturma Hatası")
+        frappe.throw("Fatura oluşturulurken hata oluştu. Logları kontrol edin.")
+
+    return created
+
+
+def get_or_create_supplier(supplier_name):
+    if frappe.db.exists("Supplier", supplier_name):
+        return supplier_name
+
+    supplier = frappe.new_doc("Supplier")
+    supplier.supplier_name = supplier_name
+    supplier.supplier_type = "Company"
+    supplier.insert(ignore_permissions=True)
+    return supplier.name
+
+
+def get_or_create_item_code(item_code, item_name):
+    if frappe.db.exists("Item", item_code):
+        return item_code
+
+    item = frappe.new_doc("Item")
+    item.item_code = item_code
+    item.item_name = item_name
+    item.item_group = "All Item Groups"  # Gerekirse özelleştir
+    item.stock_uom = "Nos"
+    item.expense_account = "Expenses - Expenses"  # Gerçek hesaplarla değiştir
+    item.income_account = "Sales - Income"
+    item.insert(ignore_permissions=True)
+    return item.item_code

@@ -12,7 +12,8 @@
   "supplier",
   "total",
   "tax",
-  "general_total"
+  "general_total",
+  "custom_selected"
  ],
  "fields": [
   {
@@ -54,12 +55,18 @@
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "General Total"
+  },
+  {
+   "default": "0",
+   "fieldname": "custom_selected",
+   "fieldtype": "Check",
+   "label": "custom_selected"
   }
  ],
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2025-06-30 13:20:53.943355",
+ "modified": "2025-07-11 16:58:02.250128",
  "modified_by": "Administrator",
  "module": "TD EInvoice",
  "name": "TD EInvoice Inbox Item",
