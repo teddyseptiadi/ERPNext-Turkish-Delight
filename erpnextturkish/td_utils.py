@@ -2236,7 +2236,7 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
         'country': safe_get(customer_address, "country"),
         'pincode': safe_get(customer_address, "pincode")
     }
-
+	#testttt
     # Şoför bilgileri
     sofor_adi = ""
     sofor_soyadi = ""
