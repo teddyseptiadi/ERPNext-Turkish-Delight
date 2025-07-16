@@ -1980,7 +1980,7 @@ Discount Amount: {item.discount_amount}
 <Fatura xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <Profil>{xml_profile}</Profil>
   <Senaryo>{scenario}</Senaryo>
-  <No>{doc.name}</No>
+  <No></No>
   <UUID>{uuid_str}</UUID>
   <Tarih>{doc.posting_date}</Tarih>
   <Zaman>{posting_time}</Zaman>
@@ -2318,7 +2318,7 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
 <Fatura xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <Profil>EIRSALIYE</Profil>
   <Senaryo>TEMELIRSALIYE</Senaryo>
-  <No>{doc.name}</No>
+  <No></No>
   <UUID>{uuid_str}</UUID>
   <Tarih>{doc.posting_date}</Tarih>
   <Zaman>{sevk_info['zaman']}</Zaman>
