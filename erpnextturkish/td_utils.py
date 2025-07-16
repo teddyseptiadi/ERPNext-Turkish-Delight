@@ -2262,24 +2262,21 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
         except Exception as e:
             print(f"Driver bilgisi alınırken hata: {e}")
 
+    # Şoför bilgileri validasyonu
+    if not sofor_adi or not sofor_soyadi or not sofor_tc:
+        frappe.throw("Şoför bilgileri eksik! Şoför Adı, Soyadı ve TC No alanları dolu olmalıdır.")
+
     # Taşıyıcı bilgileri
     tasiyici_vkn = None
+    tasiyici_unvan = None
+    
     if doc.transporter:
         try:
             transporter_supplier = frappe.get_doc("Supplier", doc.transporter)
             tasiyici_vkn = transporter_supplier.tax_id
+            tasiyici_unvan = doc.transporter_name
         except:
             pass
-
-    tasiyici_info = {
-        'tax_id': tasiyici_vkn or sender_info['tax_id'],
-        'company_name': doc.transporter_name or sender_info['company_name'],
-        'plaka': plaka,
-        'sofor_adi': sofor_adi,
-        'sofor_soyadi': sofor_soyadi,
-        'sofor_tc': sofor_tc,
-        'lr_no': doc.lr_no or ""
-    }
 
     sevk_info = {
         'tarih': doc.posting_date or frappe.utils.today(),
@@ -2307,6 +2304,13 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
     net_total = getattr(doc, 'net_total', 0) or getattr(doc, 'total', 0) or 0
     grand_total = getattr(doc, 'grand_total', 0) or getattr(doc, 'rounded_total', 0) or net_total
     discount_amount = getattr(doc, 'discount_amount', 0) or 0
+
+    
+    tasiyici_vkn_tc = "VKN"
+    if not (tasiyici_vkn and tasiyici_unvan):
+        tasiyici_vkn_tc = ""
+        tasiyici_vkn = ""
+        tasiyici_unvan = ""
 
     xml_template = f"""<?xml version="1.0"?>
 <Fatura xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
@@ -2345,14 +2349,14 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
   </FaturaAlici>
   <Irsaliye>
     <Tasiyici>
-      <VknTc>VKN</VknTc>
-      <VknTcNo>{tasiyici_info['tax_id']}</VknTcNo>
-      <Unvan>{html.escape(tasiyici_info['company_name'])}</Unvan>
-      <Plaka>{doc.vehicle_no or ""}</Plaka>
-      <SoforAdi>{tasiyici_info['sofor_adi']}</SoforAdi>
-      <SoforSoyadi>{tasiyici_info['sofor_soyadi']}</SoforSoyadi>
-      <SoforTcNo>{tasiyici_info['sofor_tc']}</SoforTcNo>
-    </Tasiyici>  
+      <VknTc>{tasiyici_vkn_tc}</VknTc>
+      <VknTcNo>{tasiyici_vkn}</VknTcNo>
+      <Unvan>{html.escape(tasiyici_unvan) if tasiyici_unvan else ""}</Unvan>
+      <Plaka>{plaka}</Plaka>
+      <SoforAdi>{sofor_adi}</SoforAdi>
+      <SoforSoyadi>{sofor_soyadi}</SoforSoyadi>
+      <SoforTcNo>{sofor_tc}</SoforTcNo>
+    </Tasiyici>
     <Sevk>
       <SevkTarihi>{sevk_info['tarih']}</SevkTarihi>
       <SevkZamani>{sevk_info['zaman']}</SevkZamani>
