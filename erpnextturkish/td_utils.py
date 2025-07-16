@@ -2102,34 +2102,15 @@ def send_delivery_note_to_finalizer(delivery_note_name=None):
                 missing_fields.append("Tax ID")
             if not customer.custom_tax_office:
                 missing_fields.append("Tax Office")
-
-            # Customer Address fallback kontrolü
-            has_valid_customer_address = False
-            if doc_dn.customer_address:
-                has_valid_customer_address = True
-            else:
-                # Fallback olarak başka bir adres var mı?
-                try:
-                    address_links = frappe.get_all("Dynamic Link", 
-                        filters={
-                            "link_doctype": "Customer",
-                            "link_name": doc_dn.customer,
-                            "parenttype": "Address"
-                        },
-                        fields=["parent"]
-                    )
-                    if address_links:
-                        has_valid_customer_address = True
-                except:
-                    pass
-
-            if not has_valid_customer_address:
+            if not doc_dn.customer_address:
                 missing_fields.append("Customer Address")
 
             if missing_fields:
                 fields_str = ", ".join(missing_fields)
                 frappe.throw(f"E-İrsaliye entegrasyonu aktif. Aşağıdaki zorunlu alanlar eksik: {fields_str}.")
 
+        # Posta kodu validasyonu
+        validate_postal_codes(doc_dn, ewaybill_settings)
 
         receiver_id = customer.tax_id or doc_dn.customer_name
         if not receiver_id:
@@ -2183,38 +2164,23 @@ HTTP {resp.status_code}
 
 
 def validate_postal_codes(doc_dn, ewaybill_settings=None):
-    """Sadece müşteri adresi için posta kodu kontrolü yapar, fallback destekli"""
-    def is_valid_pincode(addr):
-        return addr and addr.pincode and str(addr.pincode).strip()
-
-    # Öncelikle doğrudan customer_address alanını kontrol et
+    """Sadece müşteri adresi için posta kodu kontrolü yapar"""
+    missing_postal_codes = []
+    
+    # Müşteri posta kodu kontrolü
     if doc_dn.customer_address:
         try:
             customer_address = frappe.get_doc("Address", doc_dn.customer_address)
-            if is_valid_pincode(customer_address):
-                return  # ✅ posta kodu geçerli, sorun yok
+            if not customer_address.pincode or not str(customer_address.pincode).strip():
+                missing_postal_codes.append("Müşteri adresi posta kodu")
         except:
-            pass
-
-    # Fallback olarak müşteriyle ilişkilendirilmiş adreslerde pincode ara
-    try:
-        address_links = frappe.get_all("Dynamic Link", 
-            filters={
-                "link_doctype": "Customer",
-                "link_name": doc_dn.customer,
-                "parenttype": "Address"
-            },
-            fields=["parent"]
-        )
-        for link in address_links:
-            addr = frappe.get_doc("Address", link.parent)
-            if is_valid_pincode(addr):
-                return  # ✅ en az bir geçerli posta kodu bulundu
-    except:
-        pass
-
-    # Hiçbir geçerli posta kodu yoksa hata ver
-    frappe.throw("E-İrsaliye için zorunlu posta kodu alanı eksik: Müşteri adresi posta kodu")
+            missing_postal_codes.append("Müşteri adresi posta kodu")
+    else:
+        missing_postal_codes.append("Müşteri adresi posta kodu")
+    
+    if missing_postal_codes:
+        fields_str = ", ".join(missing_postal_codes)
+        frappe.throw(f"E-İrsaliye için zorunlu posta kodu alanları eksik: {fields_str}")
 
 
 def get_einvoice_unit(item_uom, ewaybill_settings):
@@ -2247,53 +2213,19 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
 
     customer_doc = frappe.get_doc("Customer", doc.customer)
     customer_address = None
-
-    # 1. Öncelik: Delivery Note üzerindeki adres
     if doc.customer_address:
         try:
             customer_address = frappe.get_doc("Address", doc.customer_address)
         except:
             pass
 
-    # 2. Fallback: Customer → Address bağlantısı üzerinden uygun adresi bul
-    if not customer_address:
+    # Sevkiyat adresi için ayrı address alma
+    shipping_address = None
+    if doc.shipping_address_name:
         try:
-            address_links = frappe.get_all("Dynamic Link", 
-                filters={
-                    "link_doctype": "Customer",
-                    "link_name": doc.customer,
-                    "parenttype": "Address"
-                },
-                fields=["parent"]
-            )
-
-            # Öncelik sırası: shipping + pincode → primary + pincode → herhangi pincode → ilk adres
-            for link in address_links:
-                addr = frappe.get_doc("Address", link.parent)
-                if addr.is_shipping_address and addr.pincode:
-                    customer_address = addr
-                    break
-
-            if not customer_address:
-                for link in address_links:
-                    addr = frappe.get_doc("Address", link.parent)
-                    if addr.is_primary_address and addr.pincode:
-                        customer_address = addr
-                        break
-
-            if not customer_address:
-                for link in address_links:
-                    addr = frappe.get_doc("Address", link.parent)
-                    if addr.pincode:
-                        customer_address = addr
-                        break
-
-            if not customer_address and address_links:
-                customer_address = frappe.get_doc("Address", address_links[0].parent)
-
-        except Exception as e:
-            frappe.log_error(f"Müşteri adresi alınırken hata: {e}", "E-İrsaliye Adres Alımı")
-            customer_address = frappe._dict({})
+            shipping_address = frappe.get_doc("Address", doc.shipping_address_name)
+        except:
+            pass
 
     def safe_get(obj, field):
         return getattr(obj, field, "") or ""
@@ -2313,6 +2245,15 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
         'pincode': safe_get(customer_address, "pincode")
     }
 
+    shipping_info = {
+        'city': safe_get(shipping_address, "city") if shipping_address else receiver_info['city'],
+        'district': safe_get(shipping_address, "county") if shipping_address else receiver_info['district'],
+        'address': f"{safe_get(shipping_address, 'address_line1')} {safe_get(shipping_address, 'address_line2')}".strip() if shipping_address else receiver_info['address'],
+        'country': safe_get(shipping_address, "country") if shipping_address else receiver_info['country'],
+        'pincode': safe_get(shipping_address, "pincode") if shipping_address else receiver_info['pincode']
+    }
+
+    #testttt
     # Şoför bilgileri
     sofor_adi = ""
     sofor_soyadi = ""
@@ -2336,14 +2277,16 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
                         getattr(driver_doc, "custom_license_plate", "") or
                         getattr(driver_doc, "vehicle_no", "") or "")
         except Exception as e:
-            frappe.log_error(f"Driver bilgisi alınırken hata: {e}", "E-İrsaliye Şoför Hatası")
+            print(f"Driver bilgisi alınırken hata: {e}")
 
+    # Şoför bilgileri validasyonu
     if not sofor_adi or not sofor_soyadi or not sofor_tc:
         frappe.throw("Şoför bilgileri eksik! Şoför Adı, Soyadı ve TC No alanları dolu olmalıdır.")
 
+    # Taşıyıcı bilgileri
     tasiyici_vkn = sender_info['tax_id']
     tasiyici_unvan = sender_info['company_name']
-
+    
     if doc.transporter:
         try:
             transporter_supplier = frappe.get_doc("Supplier", doc.transporter)
@@ -2351,7 +2294,8 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
             tasiyici_unvan = doc.transporter_name
         except:
             pass
-
+    
+    
     tasiyici_vkn_tc = "TC" if len(str(tasiyici_vkn)) == 11 else "VKN"
 
     sevk_info = {
@@ -2361,7 +2305,7 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
         'siparis_no': doc.name,
         'belge_tarihi': doc.posting_date or frappe.utils.today(),
         'belge_no': doc.name,
-        'posta_kodu': receiver_info['pincode']
+        'posta_kodu': shipping_info['pincode']  # Sevkiyat adresinden posta kodu
     }
 
     satirlar = ""
@@ -2381,9 +2325,45 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
     grand_total = getattr(doc, 'grand_total', 0) or getattr(doc, 'rounded_total', 0) or net_total
     discount_amount = getattr(doc, 'discount_amount', 0) or 0
 
+    # Sender VknTc kontrolü
     sender_vkn_tc = "TC" if len(str(sender_info['tax_id'])) == 11 else "VKN"
+    
+    # Receiver VknTc kontrolü
     receiver_vkn_tc = "TC" if len(str(receiver_info['tax_id'])) == 11 else "VKN"
-
+    
+    # TC için isim soyisim ayırma
+    receiver_sahis_ad = ""
+    receiver_sahis_soyad = ""
+    if receiver_vkn_tc == "TC":
+        # customer_name alanından direkt olarak al
+        name_parts = customer_doc.customer_name.strip().split()
+        if len(name_parts) >= 2:
+            receiver_sahis_ad = " ".join(name_parts[:-1])
+            receiver_sahis_soyad = name_parts[-1]
+        elif len(name_parts) == 1:
+            receiver_sahis_ad = name_parts[0]
+    
+    # FaturaAlici kısmı için TC kontrolü ile dinamik XML oluşturma
+    fatura_alici_xml = f"""  <FaturaAlici>
+    <VknTc>{receiver_vkn_tc}</VknTc>
+    <VknTcNo>{receiver_info['tax_id']}</VknTcNo>
+    <Unvan>{html.escape(receiver_info['company_name'])}</Unvan>
+    <Tel>{receiver_info['phone']}</Tel>
+    <Eposta>{receiver_info['email']}</Eposta>
+    <VergiDairesi>{receiver_info['tax_office']}</VergiDairesi>
+    <Ulke>{receiver_info['country']}</Ulke>
+    <Sehir>{receiver_info['city']}</Sehir>
+    <Ilce>{receiver_info['district']}</Ilce>
+    <AdresMahCad>{receiver_info['address']}</AdresMahCad>"""
+    
+    # TC ise SahisAd ve SahisSoyad alanlarını ekle
+    if receiver_vkn_tc == "TC":
+        fatura_alici_xml += f"""
+    <SahisAd>{html.escape(receiver_sahis_ad)}</SahisAd>
+    <SahisSoyad>{html.escape(receiver_sahis_soyad)}</SahisSoyad>"""
+    
+    fatura_alici_xml += "\n  </FaturaAlici>"
+    
     xml_template = f"""<?xml version="1.0"?>
 <Fatura xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <Profil>EIRSALIYE</Profil>
@@ -2407,18 +2387,7 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
     <Ilce>{sender_info['district']}</Ilce>
     <AdresMahCad>{sender_info['address']}</AdresMahCad>
   </FaturaSahibi>
-  <FaturaAlici>
-    <VknTc>{receiver_vkn_tc}</VknTc>
-    <VknTcNo>{receiver_info['tax_id']}</VknTcNo>
-    <Unvan>{html.escape(receiver_info['company_name'])}</Unvan>
-    <Tel>{receiver_info['phone']}</Tel>
-    <Eposta>{receiver_info['email']}</Eposta>
-    <VergiDairesi>{receiver_info['tax_office']}</VergiDairesi>
-    <Ulke>{receiver_info['country']}</Ulke>
-    <Sehir>{receiver_info['city']}</Sehir>
-    <Ilce>{receiver_info['district']}</Ilce>
-    <AdresMahCad>{receiver_info['address']}</AdresMahCad>
-  </FaturaAlici>
+{fatura_alici_xml}
   <Irsaliye>
     <Tasiyici>
       <VknTc>{tasiyici_vkn_tc}</VknTc>
@@ -2436,10 +2405,10 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
       <SiparisNo>{sevk_info['siparis_no']}</SiparisNo>
       <BelgeTarihi>{sevk_info['belge_tarihi']}</BelgeTarihi>
       <BelgeNo>{sevk_info['belge_no']}</BelgeNo>
-      <Ulke>{receiver_info['country']}</Ulke>
-      <Sehir>{receiver_info['city']}</Sehir>
-      <Ilce>{receiver_info['district']}</Ilce>
-      <AdresMahCad>{receiver_info['address']}</AdresMahCad>
+      <Ulke>{shipping_info['country']}</Ulke>
+      <Sehir>{shipping_info['city']}</Sehir>
+      <Ilce>{shipping_info['district']}</Ilce>
+      <AdresMahCad>{shipping_info['address']}</AdresMahCad>
       <PostaKodu>{sevk_info['posta_kodu']}</PostaKodu>
     </Sevk>   
  </Irsaliye>
@@ -2452,7 +2421,6 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
 </Fatura>"""
 
     return xml_template
-
 
 def get_sender_info_from_ewaybill_settings(ewaybill_settings):
     """TD EWayBill Settings'den gönderici bilgilerini al"""
