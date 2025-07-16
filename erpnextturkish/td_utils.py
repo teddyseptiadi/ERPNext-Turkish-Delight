@@ -2267,8 +2267,8 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
         frappe.throw("Şoför bilgileri eksik! Şoför Adı, Soyadı ve TC No alanları dolu olmalıdır.")
 
     # Taşıyıcı bilgileri
-    tasiyici_vkn = None
-    tasiyici_unvan = None
+    tasiyici_vkn = sender_info['tax_id']
+    tasiyici_unvan = sender_info['company_name']
     
     if doc.transporter:
         try:
@@ -2277,6 +2277,9 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
             tasiyici_unvan = doc.transporter_name
         except:
             pass
+    
+    
+    tasiyici_vkn_tc = "TC" if len(str(tasiyici_vkn)) == 11 else "VKN"
 
     sevk_info = {
         'tarih': doc.posting_date or frappe.utils.today(),
@@ -2305,13 +2308,12 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
     grand_total = getattr(doc, 'grand_total', 0) or getattr(doc, 'rounded_total', 0) or net_total
     discount_amount = getattr(doc, 'discount_amount', 0) or 0
 
+    # Sender VknTc kontrolü
+    sender_vkn_tc = "TC" if len(str(sender_info['tax_id'])) == 11 else "VKN"
     
-    tasiyici_vkn_tc = "VKN"
-    if not (tasiyici_vkn and tasiyici_unvan):
-        tasiyici_vkn_tc = ""
-        tasiyici_vkn = ""
-        tasiyici_unvan = ""
-
+    # Receiver VknTc kontrolü
+    receiver_vkn_tc = "TC" if len(str(receiver_info['tax_id'])) == 11 else "VKN"
+    
     xml_template = f"""<?xml version="1.0"?>
 <Fatura xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <Profil>EIRSALIYE</Profil>
@@ -2324,7 +2326,7 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
   <ParaBirimi>{doc.currency or 'TRY'}</ParaBirimi>
   <SatirSayisi>{len(doc.items)}</SatirSayisi>
   <FaturaSahibi>
-    <VknTc>VKN</VknTc>
+    <VknTc>{sender_vkn_tc}</VknTc>
     <VknTcNo>{sender_info['tax_id']}</VknTcNo>
     <Unvan>{html.escape(sender_info['company_name'])}</Unvan>
     <Tel>{sender_info['phone']}</Tel>
@@ -2336,7 +2338,7 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
     <AdresMahCad>{sender_info['address']}</AdresMahCad>
   </FaturaSahibi>
   <FaturaAlici>
-    <VknTc>VKN</VknTc>
+    <VknTc>{receiver_vkn_tc}</VknTc>
     <VknTcNo>{receiver_info['tax_id']}</VknTcNo>
     <Unvan>{html.escape(receiver_info['company_name'])}</Unvan>
     <Tel>{receiver_info['phone']}</Tel>
@@ -2351,7 +2353,7 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
     <Tasiyici>
       <VknTc>{tasiyici_vkn_tc}</VknTc>
       <VknTcNo>{tasiyici_vkn}</VknTcNo>
-      <Unvan>{html.escape(tasiyici_unvan) if tasiyici_unvan else ""}</Unvan>
+      <Unvan>{html.escape(tasiyici_unvan)}</Unvan>
       <Plaka>{plaka}</Plaka>
       <SoforAdi>{sofor_adi}</SoforAdi>
       <SoforSoyadi>{sofor_soyadi}</SoforSoyadi>
