@@ -2230,6 +2230,10 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
     def safe_get(obj, field):
         return getattr(obj, field, "") or ""
 
+    # Country alanlarını Turkey - Türkiye dönüştürme fonksiyonu falan filan
+    def convert_country(country):
+        return "Türkiye" if country == "Turkey" else country
+
     sender_info = get_sender_info_from_ewaybill_settings(ewaybill_settings)
 
     receiver_info = {
@@ -2241,7 +2245,7 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
         'city': safe_get(customer_address, "city"),
         'district': safe_get(customer_address, "county"),
         'address': f"{safe_get(customer_address, 'address_line1')} {safe_get(customer_address, 'address_line2')}".strip(),
-        'country': safe_get(customer_address, "country"),
+        'country': convert_country(safe_get(customer_address, "country")),
         'pincode': safe_get(customer_address, "pincode")
     }
 
@@ -2249,7 +2253,7 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
         'city': safe_get(shipping_address, "city") if shipping_address else receiver_info['city'],
         'district': safe_get(shipping_address, "county") if shipping_address else receiver_info['district'],
         'address': f"{safe_get(shipping_address, 'address_line1')} {safe_get(shipping_address, 'address_line2')}".strip() if shipping_address else receiver_info['address'],
-        'country': safe_get(shipping_address, "country") if shipping_address else receiver_info['country'],
+        'country': convert_country(safe_get(shipping_address, "country")) if shipping_address else receiver_info['country'],
         'pincode': safe_get(shipping_address, "pincode") if shipping_address else receiver_info['pincode']
     }
 
@@ -2382,7 +2386,7 @@ def generate_delivery_note_xml(doc, ewaybill_settings):
     <Tel>{sender_info['phone']}</Tel>
     <Eposta>{sender_info['email']}</Eposta>
     <VergiDairesi>{sender_info['tax_office']}</VergiDairesi>
-    <Ulke>{sender_info['country']}</Ulke>
+    <Ulke>{convert_country(sender_info['country'])}</Ulke>
     <Sehir>{sender_info['city']}</Sehir>
     <Ilce>{sender_info['district']}</Ilce>
     <AdresMahCad>{sender_info['address']}</AdresMahCad>
