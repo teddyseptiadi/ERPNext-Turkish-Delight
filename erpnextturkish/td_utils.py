@@ -1923,7 +1923,7 @@ def generate_invoice_xml(doc, profile_type, settings):
             mapped_unit = get_mapped_unit(settings, item.uom)
 
             iskonto_orani = float(item.discount_percentage or 0)
-            iskonto_tutari = round_currency(float(item.discount_amount or 0))
+            iskonto_tutari = round_currency(float(item.discount_amount or 0) * item.qty)
             item_amount = round_currency(float(item.amount or 0))
 
             # LOG SATIRI: Discount ve hesaplama detayları
