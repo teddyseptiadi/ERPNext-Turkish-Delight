@@ -8,7 +8,7 @@ frappe.ui.form.on('Delivery Note', {
                 },
                 callback: function(r) {
                     if (r.message.status === 'success') {
-                        frappe.msgprint(__('E-İrsaliye sent successfully!'));
+                        frappe.msgprint(__('E-Waybill sent successfully.'));
                     } else {
                         frappe.msgprint(__('Error: ') + r.message.error);
                     }

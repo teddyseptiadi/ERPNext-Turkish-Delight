@@ -55,8 +55,8 @@ frappe.ui.form.on('Sales Invoice', {
                                                     title: result.status === 'success' ? __('Success') : __('Send Error'),
                                                     indicator: result.status === 'success' ? 'green' : 'red',
                                                     message: result.status === 'success'
-                                                        ? '✅ Invoice sent successfully'
-                                                        : `❌ ${result.error || 'Send failed'}`
+                                                        ? '✅' + __('Invoice sent successfully')
+                                                        : `❌ ${result.error || __('Send failed')}`
                                                 });
                                                 frm.reload_doc();
                                             }
