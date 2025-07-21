@@ -2106,8 +2106,8 @@ def send_delivery_note_to_finalizer(delivery_note_name=None):
                 missing_fields.append("Customer Address")
 
             if missing_fields:
-                fields_str = ", ".join(missing_fields)
-                frappe.throw(f"E-İrsaliye entegrasyonu aktif. Aşağıdaki zorunlu alanlar eksik: {fields_str}.")
+                fields_str = ", ".join(_(missing_fields))
+                frappe.throw(_("E-İrsaliye entegrasyonu aktif. Aşağıdaki zorunlu alanlar eksik: ") + f"{fields_str}.")
 
         # Posta kodu validasyonu
         validate_postal_codes(doc_dn, ewaybill_settings)
