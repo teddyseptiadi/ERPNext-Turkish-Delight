@@ -1945,13 +1945,28 @@ Discount Amount: {item.discount_amount}
 
             vergi_xml = get_vergi_detaylari(item.item_code, item_amount)
 
+            #Create the item line
+            effective_price_list_rate = flt(item.price_list_rate) or flt(item.rate)
+            effective_rate = flt(item.rate)
+            qty = flt(item.qty)
+
+            # Ensure no negative discounts
+            if effective_price_list_rate > effective_rate:
+                # Normal case: discount calculation
+                final_price_list_rate = effective_price_list_rate
+            else:
+                # Edge case: rate > price list rate, avoid negative discount
+                iskonto_orani = 0.0
+                iskonto_tutari = 0.0
+                final_price_list_rate = effective_rate
+
             return f'''
   <FaturaSatir>
     <SatirNo>{i+1}</SatirNo>
     <UrunAdi>{html.escape(item.item_name)}</UrunAdi>
     <UrunKodu>{html.escape(item.item_code)}</UrunKodu>
     <OlcuBirimi>{mapped_unit}</OlcuBirimi>
-    <BirimFiyati ParaBirimi="{doc.currency}">{item.price_list_rate}</BirimFiyati>
+    <BirimFiyati ParaBirimi="{doc.currency}">{final_price_list_rate}</BirimFiyati>
     <Miktar>{item.qty}</Miktar>
     <Vergi>
       {vergi_xml}
