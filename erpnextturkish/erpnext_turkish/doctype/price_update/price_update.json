@@ -1,0 +1,137 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:FYT-{####}",
+ "creation": "2025-01-01 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "status",
+  "column_break_3",
+  "section_break_7",
+  "total_processed",
+  "successful_updates",
+  "column_break_10",
+  "new_prices_created",
+  "section_break_12",
+  "errors",
+  "tarih_tab",
+  "date"
+ ],
+ "fields": [
+  {
+   "fieldname": "date",
+   "fieldtype": "Date",
+   "label": "Date"
+  },
+  {
+   "fieldname": "column_break_3",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Durum",
+   "options": "Draft\nIsleniyor\nTamamland\u0131\nBa\u015far\u0131s\u0131z",
+   "reqd": 1
+  },
+  {
+   "fieldname": "section_break_7",
+   "fieldtype": "Section Break",
+   "label": "\u0130\u015flem Sonu\u00e7lar\u0131"
+  },
+  {
+   "default": "0",
+   "fieldname": "total_processed",
+   "fieldtype": "Int",
+   "label": "Toplam \u0130\u015flenen",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "successful_updates",
+   "fieldtype": "Int",
+   "label": "G\u00fcncellenen Fiyatlar",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_10",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "new_prices_created",
+   "fieldtype": "Int",
+   "label": "Olu\u015fturulan Yeni Fiyatlar",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_12",
+   "fieldtype": "Section Break",
+   "label": "Hatalar"
+  },
+  {
+   "fieldname": "errors",
+   "fieldtype": "Long Text",
+   "label": "Hata Mesajlar\u0131",
+   "read_only": 1
+  },
+  {
+   "fieldname": "tarih_tab",
+   "fieldtype": "Tab Break",
+   "label": "Date"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-07-17 16:58:24.233613",
+ "modified_by": "Administrator",
+ "module": "ERPNext Turkish",
+ "name": "Price Update",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Stock Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

@@ -1,0 +1,216 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "prompt",
+ "creation": "2025-07-03 17:17:37.984854",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "section_company_info",
+  "integrator",
+  "api_key",
+  "api_secret",
+  "section_integrator",
+  "company",
+  "company_name",
+  "alias",
+  "branch",
+  "tax_office",
+  "tax_office_code",
+  "central_registration_system",
+  "trade_registry_number",
+  "column_break_nxvh",
+  "district",
+  "city",
+  "country",
+  "address",
+  "phone",
+  "fax",
+  "email",
+  "website",
+  "unit_mapping_section",
+  "unit_mapping",
+  "item_matcher_section",
+  "item_matcher",
+  "notes_section",
+  "td_notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_company_info",
+   "fieldtype": "Section Break",
+   "label": "Company Information"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "company_name",
+   "fieldtype": "Data",
+   "label": "Company Name"
+  },
+  {
+   "fieldname": "alias",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "VKN Alias",
+   "read_only": 1
+  },
+  {
+   "fieldname": "branch",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Branch Code",
+   "read_only": 1
+  },
+  {
+   "fieldname": "tax_office",
+   "fieldtype": "Data",
+   "label": "Tax Office"
+  },
+  {
+   "fieldname": "tax_office_code",
+   "fieldtype": "Data",
+   "label": "Tax Office Code"
+  },
+  {
+   "fieldname": "central_registration_system",
+   "fieldtype": "Data",
+   "label": "Tax ID"
+  },
+  {
+   "fieldname": "trade_registry_number",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Trade Registry Number",
+   "read_only": 1
+  },
+  {
+   "fieldname": "district",
+   "fieldtype": "Data",
+   "label": "District"
+  },
+  {
+   "fieldname": "city",
+   "fieldtype": "Data",
+   "label": "City"
+  },
+  {
+   "fieldname": "country",
+   "fieldtype": "Data",
+   "label": "Country"
+  },
+  {
+   "fieldname": "section_integrator",
+   "fieldtype": "Section Break",
+   "label": "Integrator Configuration"
+  },
+  {
+   "fieldname": "integrator",
+   "fieldtype": "Link",
+   "label": "TD EWayBill Integrator",
+   "options": "TD EInvoice Integrator"
+  },
+  {
+   "fieldname": "api_key",
+   "fieldtype": "Data",
+   "label": "API Key"
+  },
+  {
+   "fieldname": "api_secret",
+   "fieldtype": "Password",
+   "label": "API Secret"
+  },
+  {
+   "fieldname": "unit_mapping_section",
+   "fieldtype": "Section Break",
+   "label": "Unit Mapping"
+  },
+  {
+   "fieldname": "unit_mapping",
+   "fieldtype": "Table",
+   "label": "Unit Conversion Table",
+   "options": "TD EInvoice Unit Mapping"
+  },
+  {
+   "fieldname": "item_matcher_section",
+   "fieldtype": "Section Break",
+   "label": "Item Matcher"
+  },
+  {
+   "fieldname": "item_matcher",
+   "fieldtype": "Table",
+   "options": "TD EInvoice Settings Item"
+  },
+  {
+   "fieldname": "notes_section",
+   "fieldtype": "Section Break",
+   "label": "Invoice Notes"
+  },
+  {
+   "fieldname": "td_notes",
+   "fieldtype": "HTML",
+   "label": "td_notes",
+   "options": "<h3>Usage Notes</h3>\n<h5>- Documents that can be used within notes and XML</h5>\n<h6>Delivery Note: docDN, Customer: docCustomer, Customer Address: docCustomerAddress</h6>\n<h6>Item: docItem</h6>\n"
+  },
+  {
+   "fieldname": "column_break_nxvh",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "phone",
+   "fieldtype": "Data",
+   "label": "Phone"
+  },
+  {
+   "fieldname": "fax",
+   "fieldtype": "Data",
+   "label": "Fax"
+  },
+  {
+   "fieldname": "email",
+   "fieldtype": "Data",
+   "label": "Email"
+  },
+  {
+   "fieldname": "website",
+   "fieldtype": "Data",
+   "label": "Website"
+  },
+  {
+   "fieldname": "address",
+   "fieldtype": "Text",
+   "label": "Address"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-07-14 14:26:47.104009",
+ "modified_by": "Administrator",
+ "module": "TD EInvoice",
+ "name": "TD EWayBill Settings",
+ "naming_rule": "Set by user",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

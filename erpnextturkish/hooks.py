@@ -13,6 +13,12 @@ app_license = "MIT"
 
 # Includes in <head>
 # ------------------
+# apps/your_app/hooks.py
+jenv = {
+    "methods": [
+        "jinja_get_balance_on:erpnextturkish.td_utils.jinja_get_balance_on"
+    ]
+}
 
 # include js, css files in header of desk.html
 # app_include_css = "/assets/erpnextturkish/css/erpnextturkish.css"
@@ -39,7 +45,9 @@ doctype_js = {
 	"Production Plan": "public/js/production_plan.js",
 	"Material Request": "public/js/material_request.js",
     "Stock Reconciliation": "public/js/stock_reconciliation.js",
-	"Item": "public/js/item.js"
+	"Item": "public/js/item.js",
+    "Sales Invoice" : "public/js/sales_invoice.js",
+    "Delivery Note" : "public/js/delivery_note.js"
 }
 # Home Pages
 # ----------
