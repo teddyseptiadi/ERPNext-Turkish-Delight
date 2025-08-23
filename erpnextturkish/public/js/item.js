@@ -41,12 +41,13 @@ frappe.ui.form.on("Item", {
 						
 						r.message.attribute_list.forEach( (size, d) => {
 							let column = dfVariantChart.find(num => num.idx === dColumnIndex);
-							column.label = size;
-							//Below code works on production, above code works on dev :)
-							let dfAttribute = frappe.meta.get_docfield("TD Variant Size Chart", column.fieldname, frm.doc.name);
-							dfAttribute.label = size;
+							if (column) {
+								column.label = size;
+								//Below code works on production, above code works on dev :)
+								let dfAttribute = frappe.meta.get_docfield("TD Variant Size Chart", column.fieldname, frm.doc.name);
+								dfAttribute.label = size;
+							}
 							
-
 							dColumnIndex += 1;
 						});
 						//Remove columns on right
@@ -68,6 +69,7 @@ frappe.ui.form.on("Item", {
 		} else {
 			frm.toggle_display("custom_ld_variant_size_chart", false);
 		}
+		frm.refresh_field("custom_ld_variant_size_chart");
 	},
 	refresh: function (frm) {
 		
