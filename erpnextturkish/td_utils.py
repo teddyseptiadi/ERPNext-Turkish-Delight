@@ -89,12 +89,30 @@ def get_template_valid_attributes(strTemplateItemCode):
 		docItem = frappe.get_doc("Item", variant.name)
 		for attribute in docItem.attributes:
 			if attribute.attribute == strSizeAttributeName and attribute.attribute_value not in result['attribute_list']:
-				result['attribute_list'].append(attribute.attribute_value)
+                dIdx = get_attribute_idx(docItme, strSizeAttributeName)
+				result['attribute_list'].append((dIdx, attribute.attribute_value))
 
-	result['attribute_list'] = sorted(result['attribute_list'])
+	frappe.log_error("TD Item V 1", frappe.as_json(result))
+    result['attribute_list'].sort(key=lambda x: x)
+    frappe.log_error("TD Item V 2", frappe.as_json(result))
+    result['attribute_list'] = [attr for attr in result['attribute_list']]
+    frappe.log_error("TD Item V 3", frappe.as_json(result))
+    #result['attribute_list'] = sorted(result['attribute_list'])
 
 	return result
 
+def get_attribute_idx(docItem, strSizeAttributeName):
+    #Finds item attribute no (idx) for the given variant
+    dResult = -1
+
+    for attribute in docItem.attributes:
+        if attribute.attribute == strSizeAttributeName:
+            docItemAttribute = frappe.get_doc("Item Attribute", attribute.attribute)
+            for item_attribute in docItemAttribute.item_attribute_values:
+                if attribute.attribute_value = item_attribute.attribute_value:
+                    dResult = item_attribute.idx
+
+    return dResult
 
 @frappe.whitelist()
 def process_variant_json_data(strTemplateItem, jsonData):
